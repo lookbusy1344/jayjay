@@ -142,6 +142,39 @@ struct DAGRowViewModel {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    var accessibilitySummary: String {
+        var parts = [change.changeId.id]
+        if change.isWorkingCopy {
+            parts.append("Working copy")
+        }
+        if change.hasConflict {
+            parts.append("Conflict")
+        }
+        if change.isDivergent {
+            parts.append("Divergent")
+        }
+        parts.append(contentsOf: change.bookmarks.map { "Bookmark \($0)" })
+        parts.append(contentsOf: change.tags.map { "Tag \($0)" })
+        parts.append(descriptionLine ?? "No description")
+        parts.append(change.author.name)
+        parts.append(contentsOf: continuationAccessibilityDescriptions)
+        return parts.joined(separator: ", ")
+    }
+
+    private var continuationAccessibilityDescriptions: [String] {
+        (row?.continuations ?? []).map { continuation in
+            let relatedId = String(continuation.relatedCommitId.prefix(12))
+            switch continuation.direction {
+                case .outgoing where layout.row(for: continuation.relatedCommitId) == nil:
+                    return "Parent \(relatedId) is outside the loaded range"
+                case .outgoing:
+                    return "Continues to parent \(relatedId) below"
+                case .incoming:
+                    return "Continues from child \(relatedId) above"
+            }
+        }
+    }
+
     var rowBackground: AnyShapeStyle {
         if isHoverDropTarget {
             return AnyShapeStyle(Color.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.10))

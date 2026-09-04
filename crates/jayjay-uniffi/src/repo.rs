@@ -5,9 +5,8 @@ use jayjay_core::{
     AnnotationLine, BookmarkInfo, ChangeDetail, ChangeInfo, CliStatus, ConflictEditorData,
     DiffEditDestination, DiffEditFileSelection, DiffHunk, DiffStats, EvologEntry, EvologRow,
     FetchResult, FileDiffStats, FileEditorData, GitSubmoduleStatus, GraphEntry, InsertPosition,
-    JjCommand, JjCommandResult, LogGraphPage, LogQuery, MutationEffect, OpLogEntry, PrInfo, Repo,
-    RevsetPreset, Stack, StackedPrResult, SubmitStackLayer, SyncToken, ToolsConfig, WorkspaceInfo,
-    WorkspacePresence,
+    JjCommand, JjCommandResult, MutationEffect, OpLogEntry, PrInfo, Repo, RevsetPreset, Stack,
+    StackedPrResult, SubmitStackLayer, SyncToken, ToolsConfig, WorkspaceInfo, WorkspacePresence,
     diff::{self, CollapsedDiff, FileDiff, ReviewFileSnapshot},
     review_display_group_map_from_hunk, review_snapshot_from_hunk,
 };
@@ -31,16 +30,6 @@ fn commit_message_prompt() -> String {
 #[uniffi::export]
 fn default_revset_with_depth(depth: u32) -> String {
     jayjay_core::build_default_revset(depth)
-}
-
-#[uniffi::export]
-fn default_log_context_depth() -> u32 {
-    jayjay_core::DEFAULT_LOG_CONTEXT_DEPTH
-}
-
-#[uniffi::export]
-fn log_page_size() -> u32 {
-    jayjay_core::LOG_PAGE_SIZE
 }
 
 #[uniffi::export]
@@ -503,34 +492,6 @@ impl JayJayRepo {
 
     fn log_graph(&self, revset: String) -> Result<Vec<GraphEntry>, JayJayError> {
         Ok(self.inner.log_graph(&revset)?)
-    }
-
-    /// One bounded log/graph page: `revset` of `None` resolves the repository's `revsets.log` setting (see [`LogQuery::Default`]); `Some(revset)` uses it verbatim.
-    fn log_graph_page(
-        &self,
-        revset: Option<String>,
-        limit: u32,
-    ) -> Result<LogGraphPage, JayJayError> {
-        let query = match revset {
-            Some(revset) => LogQuery::Explicit(revset),
-            None => LogQuery::Default,
-        };
-        let page = self.inner.log_graph_page(&query, limit)?;
-        let span = tracing::debug_span!("log_graph.ffi_payload");
-        let _entered = span.enter();
-        let continuation_count = page
-            .layout
-            .rows
-            .iter()
-            .map(|row| row.continuations.len())
-            .sum::<usize>();
-        tracing::debug!(
-            entry_records = page.entries.len(),
-            layout_row_records = page.layout.rows.len(),
-            continuation_records = continuation_count,
-            "FFI page records"
-        );
-        Ok(page)
     }
 
     fn show(&self, rev: String) -> Result<ChangeDetail, JayJayError> {

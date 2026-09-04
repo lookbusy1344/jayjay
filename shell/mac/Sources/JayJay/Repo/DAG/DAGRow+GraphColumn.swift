@@ -187,11 +187,6 @@ extension DAGRow {
                 }
             }
             .clipped()
-            .accessibilityChildren {
-                ForEach(Array((row?.continuations ?? []).enumerated()), id: \.offset) { item in
-                    Text(continuationAccessibilityLabel(item.element))
-                }
-            }
         }
     }
 
@@ -201,18 +196,6 @@ extension DAGRow {
         let fnvPrime: UInt64 = 1_099_511_628_211
         let hash = key.utf8.reduce(fnvOffsetBasis) { ($0 ^ UInt64($1)) &* fnvPrime }
         return colors[Int(hash % UInt64(colors.count))]
-    }
-
-    private func continuationAccessibilityLabel(_ continuation: DagContinuation) -> String {
-        let relatedId = String(continuation.relatedCommitId.prefix(12))
-        switch continuation.direction {
-            case .outgoing where viewModel.layout.row(for: continuation.relatedCommitId) == nil:
-                return "Parent \(relatedId) is outside the loaded range"
-            case .outgoing:
-                return "Continues to parent \(relatedId) below"
-            case .incoming:
-                return "Continues from child \(relatedId) above"
-        }
     }
 
     private func strokeStyle(for cell: DagVerticalCell) -> StrokeStyle? {

@@ -47,7 +47,7 @@ impl RepoWindow {
             vm.revset_is_default() && vm.revset.as_ref() == submitted
         };
         let displayed = if use_default {
-            jayjay_core::build_default_revset(jayjay_core::DEFAULT_LOG_CONTEXT_DEPTH)
+            jayjay_core::build_default_revset(jayjay_core::DEFAULT_REVSET_DEPTH)
         } else {
             submitted
         };

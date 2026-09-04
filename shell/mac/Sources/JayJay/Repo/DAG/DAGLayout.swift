@@ -21,7 +21,7 @@ struct DAGLayout: Sendable {
         self.init(computed: computeDagLayout(entries: entries))
     }
 
-    /// Wraps a layout the Rust side already computed (e.g. as part of `JayJayRepo.logGraphPage`) — the desktop loading path uses this so entries never round-trip back through `computeDagLayout`.
+    /// Wraps a layout computed by the Rust renderer.
     init(computed layout: JayJayCore.DagLayout) {
         rows = layout.rows
         logicalColumnCount = max(1, Int(layout.logicalColumnCount))

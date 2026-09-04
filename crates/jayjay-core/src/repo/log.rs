@@ -6,6 +6,7 @@ use futures::StreamExt as _;
 use jj_lib::backend::CommitId;
 use jj_lib::config::ConfigGetResultExt as _;
 use jj_lib::graph::TopoGroupedGraph;
+use jj_lib::hex_util::encode_reverse_hex;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::ReadonlyRepo;
 use jj_lib::repo::Repo as _;
@@ -13,9 +14,7 @@ use jj_lib::revset::{self, SymbolResolver, UserRevsetExpression};
 
 use super::Repo;
 use super::resolve::{ChangeInfoContext, CommitRefIndex};
-use super::revsets::{DEFAULT_LOG_CONTEXT_DEPTH, LogQuery, build_default_revset};
 use super::support::{block_on, on_worker_stack};
-use crate::dag::DagLayout;
 use crate::types::*;
 
 pub(crate) struct ImmutableIds {
@@ -59,15 +58,6 @@ fn collapse_graph_edges(
         });
     }
     edges
-}
-
-/// One bounded slice of the log graph: at most `applied_limit` real change rows, its computed layout, and whether the ordered stream held at least one more row beyond that limit.
-#[derive(Debug, Clone)]
-pub struct LogGraphPage {
-    pub entries: Vec<GraphEntry>,
-    pub layout: DagLayout,
-    pub has_more: bool,
-    pub applied_limit: u32,
 }
 
 impl Repo {
@@ -125,91 +115,16 @@ impl Repo {
     pub fn log_graph(&self, revset_str: &str) -> CoreResult<Vec<GraphEntry>> {
         let repo = self.get_repo();
         let expression = self.parse_revset_str(&repo, revset_str)?;
-        let (rows, _has_more) = self.collect_graph_rows(&repo, &expression, None)?;
+        let rows = self.collect_graph_rows(&repo, &expression)?;
         self.materialize_graph_entries(&repo, rows)
     }
 
-    /// Bounded log/graph load: resolves `query` (honouring `revsets.log` in [`LogQuery::Default`]), orders the complete revset through `TopoGroupedGraph` exactly as `log_graph` does, then keeps only the first `limit` rows that pass [`Repo::should_include_in_log`] — metadata and the row layout are never computed for the look-ahead row that decides `has_more`.
-    pub fn log_graph_page(&self, query: &LogQuery, limit: u32) -> CoreResult<LogGraphPage> {
-        match query {
-            LogQuery::Explicit(revset) => self.log_graph_page_for_revset(revset, limit),
-            LogQuery::Default => match self.configured_default_log_revset() {
-                Some(revset) => self.log_graph_page_for_revset(&revset, limit),
-                None => self.log_graph_page_widening_default(limit),
-            },
-        }
-    }
-
-    fn log_graph_page_for_revset(&self, revset_str: &str, limit: u32) -> CoreResult<LogGraphPage> {
-        let page_started = Instant::now();
-        let span = tracing::debug_span!("log_graph.page", limit);
-        let _entered = span.enter();
-        let repo = self.get_repo();
-        let expression = self.parse_revset_str(&repo, revset_str)?;
-        let (rows, has_more) = self.collect_graph_rows(&repo, &expression, Some(limit))?;
-        self.log_graph_page_from_rows(&repo, rows, has_more, limit, page_started)
-    }
-
-    fn log_graph_page_from_rows(
-        &self,
-        repo: &Arc<ReadonlyRepo>,
-        rows: Vec<GraphRowData>,
-        has_more: bool,
-        limit: u32,
-        page_started: Instant,
-    ) -> CoreResult<LogGraphPage> {
-        let entries = self.materialize_graph_entries(repo, rows)?;
-        let layout_started = Instant::now();
-        let layout = {
-            let span = tracing::debug_span!("log_graph.layout");
-            let _entered = span.enter();
-            DagLayout::compute(&entries)
-        };
-        tracing::debug!(
-            elapsed_us = layout_started.elapsed().as_micros() as u64,
-            "layout timing"
-        );
-        tracing::debug!(
-            elapsed_us = page_started.elapsed().as_micros() as u64,
-            "page timing"
-        );
-        Ok(LogGraphPage {
-            entries,
-            layout,
-            has_more,
-            applied_limit: limit,
-        })
-    }
-
-    /// [`LogQuery::Default`] with no `revsets.log` override: retries the pinned `builtin_log()` expression at increasing context depths until the page reaches `limit` rows or the immutable-heads context stops growing — each attempt stays bounded by the same post-`TopoGroupedGraph` limit, so a deep, branchy history never renders more than `limit` rows just because a wider depth was needed to reach that many.
-    fn log_graph_page_widening_default(&self, limit: u32) -> CoreResult<LogGraphPage> {
-        const WIDENING_DEPTHS: [u32; 5] = [DEFAULT_LOG_CONTEXT_DEPTH, 4, 8, 16, 32];
-        let page_started = Instant::now();
-        let span = tracing::debug_span!("log_graph.page", limit);
-        let _entered = span.enter();
-        let repo = self.get_repo();
-        let mut previous_count = None;
-        for &depth in &WIDENING_DEPTHS {
-            let expression = self.parse_revset_str(&repo, &build_default_revset(depth))?;
-            let (rows, has_more) = self.collect_graph_rows(&repo, &expression, Some(limit))?;
-            let reached_target = rows.len() as u32 >= limit;
-            let stalled = previous_count == Some(rows.len());
-            let done = reached_target || (!has_more && stalled) || depth == WIDENING_DEPTHS[4];
-            previous_count = Some(rows.len());
-            if done {
-                return self.log_graph_page_from_rows(&repo, rows, has_more, limit, page_started);
-            }
-        }
-        unreachable!("WIDENING_DEPTHS is non-empty and its final depth always completes")
-    }
-
-    /// Streams `expression` through the same prioritized `TopoGroupedGraph` order `jj log` uses; with `limit`, stops after that many included rows and reports whether the ordered stream held at least one more. Metadata (`commit_to_change_info`, including immutability membership) is computed only for the kept rows, never for a row past the limit — see [`Self::bounded_immutable_ids`].
+    /// Streams `expression` through the same prioritized `TopoGroupedGraph` order `jj log` uses.
     fn collect_graph_rows(
         &self,
         repo: &Arc<ReadonlyRepo>,
         expression: &Arc<UserRevsetExpression>,
-        limit: Option<u32>,
-    ) -> CoreResult<(Vec<GraphRowData>, bool)> {
+    ) -> CoreResult<Vec<GraphRowData>> {
         on_worker_stack(|| {
             let evaluation_started = Instant::now();
             let (revset_result, prioritized_ids) = {
@@ -232,7 +147,6 @@ impl Repo {
             }
 
             let mut rows = Vec::new();
-            let mut has_more = false;
             let root_commit_id = repo.store().root_commit_id();
             let mut stream = std::pin::pin!(topo_order.stream());
             let grouping_started = Instant::now();
@@ -251,12 +165,6 @@ impl Repo {
                 if !self.should_include_in_log(repo, &commit) {
                     continue;
                 }
-                if let Some(limit) = limit
-                    && rows.len() as u32 >= limit
-                {
-                    has_more = true;
-                    break;
-                }
                 rows.push((commit, collapse_graph_edges(edge_list, root_commit_id)));
             }
             drop(grouping_entered);
@@ -265,7 +173,7 @@ impl Repo {
                 "grouping timing"
             );
 
-            Ok((rows, has_more))
+            Ok(rows)
         })
     }
 
@@ -292,6 +200,8 @@ impl Repo {
                 .iter()
                 .map(|(commit, _)| commit.id().hex())
                 .collect::<HashSet<_>>();
+            let divergent_change_ids =
+                Self::repository_divergent_change_ids(repo, rows.iter().map(|(commit, _)| commit))?;
             let ref_index_started = Instant::now();
             let ref_index = {
                 let span = tracing::debug_span!("log_graph.ref_index");
@@ -340,7 +250,7 @@ impl Repo {
                 "empty checks timing"
             );
             let materialization_started = Instant::now();
-            let mut entries: Vec<GraphEntry> = {
+            let entries: Vec<GraphEntry> = {
                 let span = tracing::debug_span!("log_graph.commit_materialization");
                 let _entered = span.enter();
                 rows.into_iter()
@@ -352,8 +262,8 @@ impl Repo {
                             ChangeInfoContext {
                                 immutable_ids: Some(&immutable_ids),
                                 ref_index: Some(&ref_index),
+                                divergent_change_ids: Some(&divergent_change_ids),
                                 is_empty: Some(is_empty),
-                                ..ChangeInfoContext::default()
                             },
                         ),
                         edges,
@@ -377,36 +287,8 @@ impl Repo {
                 "log graph work counters"
             );
 
-            // Mark divergent entries
-            let divergent_ids = Self::find_divergent_ids(entries.iter().map(|e| &e.change));
-            for entry in &mut entries {
-                if divergent_ids.contains(&entry.change.change_id.id) {
-                    entry.change.is_divergent = true;
-                }
-            }
             Ok(entries)
         })
-    }
-
-    /// The repository's `revsets.log` setting when it actually overrides the pinned default, `None` when unset or still jj's own shipped default (in which case the caller widens the pinned expression itself).
-    ///
-    /// Reads via the `jj` CLI rather than `repo.settings()`, because `UserSettings` here is built once from user-level config only (see `default_settings()`) and never sees a repository-scoped (`jj config set --repo …`) layer the way the real `jj log` does.
-    fn configured_default_log_revset(&self) -> Option<String> {
-        // jj's own shipped default for `revsets.log` is the alias name `builtin_log()`, not an expression, and `revset_aliases_map()` can't resolve it — a pre-existing gap: `builtin_log()`'s alias definition is a quoted literal TOML string, which `parse_toml_string()`'s `toml::from_str::<String>` rejects as a document — so treat it exactly like an unset key.
-        const PINNED_DEFAULT_ALIAS: &str = "builtin_log()";
-
-        let configured = self
-            .run_jj_output(&["config", "get", "revsets.log"])
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .unwrap_or_default();
-        let trimmed = configured.trim();
-        if trimmed.is_empty() || trimmed == PINNED_DEFAULT_ALIAS {
-            None
-        } else {
-            Some(trimmed.to_owned())
-        }
     }
 
     /// Refuse to rewrite `commit` (resolved from `rev`) when it is immutable, using the same `immutable()` revset that drives `ChangeInfo::is_immutable`; rewrite paths that bypass the jj CLI get no immutability enforcement from jj-lib and must call this themselves.
@@ -534,6 +416,29 @@ impl Repo {
             .filter(|(_, count)| *count > 1)
             .map(|(id, _)| id.to_owned())
             .collect()
+    }
+
+    fn repository_divergent_change_ids<'a>(
+        repo: &Arc<ReadonlyRepo>,
+        commits: impl Iterator<Item = &'a jj_lib::commit::Commit>,
+    ) -> CoreResult<HashSet<String>> {
+        commits
+            .map(|commit| commit.change_id().clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter_map(
+                |change_id| match block_on(repo.resolve_change_id(&change_id)) {
+                    Ok(Some(targets)) if targets.is_divergent() => {
+                        Some(Ok(encode_reverse_hex(change_id.as_bytes())))
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                },
+            )
+            .collect::<Result<_, _>>()
+            .map_err(|error| CoreError::Internal {
+                message: format!("resolve change id: {error}"),
+            })
     }
 
     /// Mark changes with duplicate change IDs as divergent.

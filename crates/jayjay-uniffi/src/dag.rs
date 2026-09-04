@@ -1,5 +1,4 @@
 use jayjay_core as core;
-use jayjay_core::LogGraphPage;
 use jayjay_core::dag::{
     DagContinuation, DagContinuationDirection, DagEdgeKind, DagLayout, DagLinkCell, DagRowShape,
     DagVerticalCell,
@@ -9,14 +8,6 @@ use jayjay_core::dag::{
 pub struct DagLayout {
     pub rows: Vec<core::dag::DagRowShape>,
     pub logical_column_count: u32,
-}
-
-#[uniffi::remote(Record)]
-pub struct LogGraphPage {
-    pub entries: Vec<core::GraphEntry>,
-    pub layout: core::dag::DagLayout,
-    pub has_more: bool,
-    pub applied_limit: u32,
 }
 
 #[uniffi::remote(Record)]

@@ -146,6 +146,7 @@ struct DAGView: View {
                                 .id(rowId)
                                 .accessibilityElement(children: .combine)
                                 .accessibilityIdentifier(AID.DAG.row(String(rowId.prefix(12))))
+                                .accessibilityValue(rowViewModel.accessibilitySummary)
                                 .accessibilityAddTraits(
                                     rowViewModel.isSelectionHighlighted ? .isSelected : []
                                 )

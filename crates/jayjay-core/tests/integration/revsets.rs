@@ -1,7 +1,7 @@
 use std::fs;
 
 use jayjay_core::{
-    DEFAULT_LOG_CONTEXT_DEPTH, Repo, build_default_revset, combined_diff_revsets, revset_presets,
+    DEFAULT_REVSET_DEPTH, Repo, build_default_revset, combined_diff_revsets, revset_presets,
 };
 use jj_test::{init_jj_repo, run_jj};
 
@@ -79,7 +79,7 @@ fn default_revset_shows_nearby_heads() {
     let repo = Repo::open(&repo_path).expect("open repo");
 
     let log = repo
-        .log(&build_default_revset(DEFAULT_LOG_CONTEXT_DEPTH))
+        .log(&build_default_revset(DEFAULT_REVSET_DEPTH))
         .expect("evaluate default revset");
     assert!(
         !log.is_empty(),
@@ -139,7 +139,7 @@ fn default_revset_evaluates_in_cli_and_app_parser() {
     let temp_dir = init_jj_repo();
     let repo_path = temp_dir.path().join("repo");
     let repo_str = repo_path.to_str().expect("repo path utf-8");
-    let default_revset = build_default_revset(DEFAULT_LOG_CONTEXT_DEPTH);
+    let default_revset = build_default_revset(DEFAULT_REVSET_DEPTH);
 
     let cli = run_jj(&[
         "-R",
@@ -182,7 +182,7 @@ fn custom_immutable_heads_alias_can_reference_builtin_default_alias() {
 
     let repo = Repo::open(&repo_path).expect("open repo");
     let log = repo
-        .log(&build_default_revset(DEFAULT_LOG_CONTEXT_DEPTH))
+        .log(&build_default_revset(DEFAULT_REVSET_DEPTH))
         .expect("evaluate user immutable_heads() alias");
     assert!(
         log.iter().any(|change| change.is_working_copy),

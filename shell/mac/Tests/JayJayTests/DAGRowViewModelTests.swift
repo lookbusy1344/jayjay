@@ -419,6 +419,34 @@ final class DAGRowViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.graphWidth, CGFloat(4) * DAGGeometry.preferredLanePitch + DAGGeometry.horizontalPadding)
     }
 
+    func testAccessibilitySummaryPreservesDescriptionAndContinuation() {
+        let entry = makeEntry(
+            changeId: "visible-change",
+            commitId: "visible-commit",
+            description: "add feature",
+            isImmutable: false,
+            parents: ["outside-parent"]
+        )
+        let layout = DAGLayout(entries: [entry])
+        let viewModel = DAGRowViewModel(
+            entry: entry,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
+            index: 0,
+            selectedId: nil,
+            compareFromId: nil,
+            contextTargetId: nil,
+            rebaseDrag: nil,
+            rebasePreviewText: nil,
+            bookmarkDrag: nil,
+            bookmarkPreviewText: nil,
+            colorScheme: .light
+        )
+
+        XCTAssertTrue(viewModel.accessibilitySummary.contains("add feature"))
+        XCTAssertTrue(viewModel.accessibilitySummary.contains("outside the loaded range"))
+    }
+
     private func defaultGeometry(for layout: DAGLayout) -> DAGGeometry {
         DAGGeometry(logicalColumnCount: layout.logicalColumnCount, availableSidebarWidth: 320)
     }
