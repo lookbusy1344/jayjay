@@ -19,6 +19,7 @@ extension RepoViewModel {
             viewModel.error = message
         }
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         isRefreshingInFlight = true
         error = nil

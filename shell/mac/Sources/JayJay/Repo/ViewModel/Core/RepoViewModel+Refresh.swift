@@ -117,6 +117,7 @@ extension RepoViewModel {
         )
         let token = JayJayGraphLoadToken()
         graphLoadToken = token
+        graphLoadGeneration = generation
         let observer = MainActorLogGraphObserver { [weak self] event in
             self?.applyLogGraphEvent(event, context: context)
         }
@@ -233,7 +234,17 @@ extension RepoViewModel {
         _ event: LogGraphEvent,
         context: RepoGraphRefreshContext
     ) {
-        guard !isShuttingDown, graphRefreshGeneration == context.generation else { return }
+        guard !isShuttingDown else { return }
+        guard graphRefreshGeneration == context.generation else {
+            if case .snapshot = event {
+                return
+            }
+            if case .progress = event {
+                return
+            }
+            finishGraphLoad(generation: context.generation)
+            return
+        }
 
         switch event {
             case let .snapshot(snapshot):
@@ -272,11 +283,14 @@ extension RepoViewModel {
 
     @MainActor
     private func finishGraphLoad(generation: UInt64) {
-        guard graphRefreshGeneration == generation else { return }
+        guard graphLoadGeneration == generation else { return }
         graphLoadToken = nil
+        graphLoadGeneration = nil
         graphLoadCanceling = false
-        isLoading = false
-        isRefreshingInFlight = false
+        if graphRefreshGeneration == generation {
+            isLoading = false
+            isRefreshingInFlight = false
+        }
     }
 
     @MainActor
@@ -298,6 +312,16 @@ extension RepoViewModel {
         graphLoadToken.cancel()
         refreshTask?.cancel()
         graphLoadCanceling = true
+    }
+
+    /// A mutation cannot share a repository generation with a pinned graph reader. Reject queued
+    /// graph events before the write begins; the canceled worker still observes its core token.
+    func cancelGraphLoadForMutation() {
+        guard graphLoadToken != nil else { return }
+        cancelGraphLoad()
+        graphRefreshGeneration &+= 1
+        isRefreshingInFlight = false
+        isLoading = false
     }
 
     func continueLoading() {

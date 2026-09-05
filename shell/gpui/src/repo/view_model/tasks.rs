@@ -69,6 +69,9 @@ impl RepoViewModel {
         write: impl FnOnce(Arc<Repo>) -> CoreResult<()> + Send + 'static,
         on_success: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) -> Task<CoreResult<()>> {
+        // A graph session owns a pinned read-only snapshot. Latch it before starting any jj
+        // write, and reject already-queued snapshots before the operation can change the repo.
+        self.cancel_graph_session_for_mutation(cx);
         self.repo_result_task(cx, write, move |vm, _, cx| on_success(vm, cx))
     }
 

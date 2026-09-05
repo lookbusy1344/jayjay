@@ -66,6 +66,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     private var fsWatcher: RepoFSWatcher?
     var refreshTask: Task<Void, Never>?
     @ObservationIgnored var graphLoadToken: JayJayGraphLoadToken?
+    @ObservationIgnored var graphLoadGeneration: UInt64?
     @ObservationIgnored var graphRefreshGeneration: UInt64 = 0
     @ObservationIgnored var graphFirstSnapshotApplied = false
     @ObservationIgnored var graphPendingSelectedChange: ChangeDetail?

@@ -84,6 +84,7 @@ extension RepoViewModel {
         selecting rev: String? = "@",
         selectingResult: ((Result) -> String)? = nil,
         gatedBy gate: RepoActionGate? = nil,
+        cancelsGraph: Bool = true,
         beforeRefresh: @escaping @MainActor (RepoViewModel) -> Void = { _ in },
         onSuccess: @escaping @MainActor (RepoViewModel, Result) -> Void,
         onFailure: @escaping @MainActor (RepoViewModel, any Error) -> Void = { viewModel, error in
@@ -97,6 +98,9 @@ extension RepoViewModel {
                 return false
             }
             self[keyPath: gate.state] = true
+        }
+        if cancelsGraph {
+            cancelGraphLoadForMutation()
         }
         lastInternalMutationAt = Date()
         runRepoTask(action) { viewModel, result in

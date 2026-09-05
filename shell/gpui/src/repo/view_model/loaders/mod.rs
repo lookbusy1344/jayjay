@@ -175,6 +175,7 @@ impl RepoViewModel {
         let previous_selection = selection;
         let token = GraphLoadToken::new();
         self.loading.graph_session = Some(token.clone());
+        self.loading.graph_session_gen = Some(generation);
         self.loading.graph_session_canceling = false;
         self.loading.graph_first_snapshot_applied = false;
         self.loading.graph_paused = false;
@@ -260,6 +261,15 @@ impl RepoViewModel {
             cx.notify();
         }
         true
+    }
+
+    /// A write must never race a pinned graph snapshot. Invalidate its generation immediately so
+    /// any event already queued for the UI cannot overwrite mutation-era state; retain the token
+    /// until that worker's terminal event performs its own task bookkeeping.
+    pub(in crate::repo) fn cancel_graph_session_for_mutation(&mut self, cx: &mut Context<Self>) {
+        if self.cancel_graph_session(cx) {
+            self.loading.refresh_gen = self.loading.refresh_gen.wrapping_add(1);
+        }
     }
 
     fn apply_refresh_update(
@@ -348,8 +358,9 @@ impl RepoViewModel {
     /// exactly one matching `finish_repo_task()`, even for a superseded run.
     fn finish_graph_session(&mut self, generation: u64, cx: &mut Context<Self>) {
         self.finish_repo_task(cx);
-        if self.loading.refresh_gen == generation {
+        if self.loading.graph_session_gen == Some(generation) {
             self.loading.graph_session = None;
+            self.loading.graph_session_gen = None;
             self.loading.graph_session_canceling = false;
         }
     }

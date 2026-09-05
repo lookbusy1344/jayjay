@@ -27,6 +27,7 @@ extension RepoViewModel {
                 state: \.isPushingInFlight,
                 busyMessage: "Push already in progress"
             ),
+            cancelsGraph: false,
             onSuccess: { viewModel, message in
                 viewModel.pushSync = nil
                 viewModel.info = message

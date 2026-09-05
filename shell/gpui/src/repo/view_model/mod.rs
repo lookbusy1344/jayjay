@@ -90,6 +90,9 @@ pub struct LoadingState {
     /// Set while a `start_log_graph` session is running for the current `refresh_gen`; the toolbar
     /// refresh button becomes a cancel action for it. Cleared once the session's terminal event lands.
     pub(crate) graph_session: Option<GraphLoadToken>,
+    /// Generation that owns `graph_session`. A mutation invalidates `refresh_gen` immediately so
+    /// stale snapshots cannot apply, but the terminal event for this generation still owns cleanup.
+    pub(crate) graph_session_gen: Option<u64>,
     /// True once `graph_session`'s token has been latched but its terminal event has not arrived yet.
     pub graph_session_canceling: bool,
     /// True once the active session's first snapshot has been applied; guards selection-restoration

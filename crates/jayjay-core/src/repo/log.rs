@@ -221,15 +221,18 @@ impl Repo {
                 let (commit_id, edge_list) = result.map_err(|e| CoreError::Internal {
                     message: format!("graph stream: {e}"),
                 })?;
+                // The graph stream includes jj's synthetic root. It is the only row this path
+                // excludes, so avoid the broader display predicate and its ref lookups for every
+                // ordinary commit.
+                if &commit_id == root_commit_id {
+                    continue;
+                }
                 let commit =
                     repo.store()
                         .get_commit(&commit_id)
                         .map_err(|e| CoreError::Internal {
                             message: format!("get commit: {e}"),
                         })?;
-                if !self.should_include_in_log(repo, &commit) {
-                    continue;
-                }
                 rows.push((commit, collapse_graph_edges(edge_list, root_commit_id)));
             }
             drop(grouping_entered);
@@ -306,6 +309,12 @@ impl Repo {
             let (commit_id, edge_list) = result.map_err(|e| CoreError::Internal {
                 message: format!("graph stream: {e}"),
             })?;
+            // `TopoGroupedGraph` yields the synthetic root too. Filter it before loading a
+            // commit; `should_include_in_log()` is intentionally broader and would perform
+            // working-copy/bookmark queries once for every real graph row.
+            if &commit_id == root_commit_id {
+                continue;
+            }
             let commit = repo
                 .store()
                 .get_commit(&commit_id)
@@ -313,9 +322,6 @@ impl Repo {
                     message: format!("get commit: {e}"),
                 })?;
             consumed += 1;
-            if !self.should_include_in_log(&repo, &commit) {
-                continue;
-            }
             raw_rows.push((commit, collapse_graph_edges(edge_list, root_commit_id)));
 
             if consumed.is_multiple_of(background_batch_rows) {
