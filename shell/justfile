@@ -350,5 +350,5 @@ gpui-appimage:
     (cd "{{root}}/build/gpui-appimage" && sha256sum "$(basename "$appimage")" | tee "$(basename "$appimage").sha256"); \
     ls -lh "{{root}}/build/gpui-appimage"
 
-gpui-test:
-  cargo test -p jayjay-gpui
+gpui-test *args:
+  cargo nextest run -p jayjay-gpui {{args}}
