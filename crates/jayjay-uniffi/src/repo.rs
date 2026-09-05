@@ -494,6 +494,22 @@ impl JayJayRepo {
         Ok(self.inner.log_graph(&revset)?)
     }
 
+    /// Runs a progressive graph-load session, delivering each snapshot and terminal event to
+    /// `observer` as it is published. Blocks the calling thread for the session's lifetime, so the
+    /// shell calls it off its UI thread; `token` cancels it. Each snapshot carries its own layout,
+    /// so the shell renders without a second layout round trip.
+    fn start_log_graph(
+        &self,
+        request: crate::log_graph::LogGraphRequest,
+        token: Arc<crate::log_graph::JayJayGraphLoadToken>,
+        observer: Arc<dyn crate::log_graph::LogGraphObserver>,
+    ) {
+        self.inner
+            .start_log_graph(request.into(), token.inner.clone(), move |event| {
+                observer.on_event(event.into());
+            });
+    }
+
     fn show(&self, rev: String) -> Result<ChangeDetail, JayJayError> {
         Ok(self.inner.show(&rev)?)
     }
