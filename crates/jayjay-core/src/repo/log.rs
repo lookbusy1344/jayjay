@@ -19,7 +19,7 @@ use super::graph_load::{
 };
 use super::resolve::{ChangeInfoContext, CommitRefIndex};
 use super::support::{block_on, on_worker_stack};
-use crate::dag::{DagLayout, MAX_CONTINUOUS_CONNECTOR_ROWS};
+use crate::dag::{DagLayout, DagLayoutInput, MAX_CONTINUOUS_CONNECTOR_ROWS};
 use crate::types::*;
 
 pub(crate) struct ImmutableIds {
@@ -259,6 +259,7 @@ impl Repo {
     ) {
         on_worker_stack(|| {
             let clock = SystemClock;
+            token.initialize_row_ceiling(request.row_ceiling.max(1));
             let guard = RequestGuard::new(token, &clock, request.first_result_budget);
             if let Err(error) = self.run_log_graph_session(&request, &guard, &mut on_event) {
                 on_event(LogGraphEvent::Failed(error));
@@ -295,7 +296,9 @@ impl Repo {
         let mut raw_rows: Vec<GraphRowData> = Vec::new();
         let mut published_rows: u32 = 0;
         let mut next_threshold: u32 = request.initial_rows.max(1);
+        let mut row_ceiling = request.row_ceiling.max(1);
         let mut consumed: u64 = 0;
+        let mut last_reported_consumed: u64 = 0;
         let background_batch_rows = u64::from(request.background_batch_rows.max(1));
 
         loop {
@@ -329,23 +332,23 @@ impl Repo {
                     on_event(LogGraphEvent::Canceled);
                     return Ok(());
                 }
-                on_event(LogGraphEvent::Progress(LogGraphProgress {
-                    consumed_rows: consumed,
-                    materialized_rows: u64::from(published_rows),
-                    elapsed: guard.elapsed(),
-                    first_result_budget_expired: guard.first_result_budget_expired(),
-                }));
+                report_graph_progress(consumed, published_rows, guard, on_event);
+                last_reported_consumed = consumed;
             }
 
             let available_to_publish =
                 (raw_rows.len() as u32).saturating_sub(MAX_CONTINUOUS_CONNECTOR_ROWS as u32);
-            let publish_target = next_threshold.min(request.row_ceiling);
+            let publish_target = next_threshold.min(row_ceiling);
             let budget_target = raw_rows.len() as u32;
             let budget_requires_publish =
                 guard.should_publish_first_result(published_rows, budget_target);
             if available_to_publish >= publish_target || budget_requires_publish {
+                if last_reported_consumed != consumed {
+                    report_graph_progress(consumed, published_rows, guard, on_event);
+                    last_reported_consumed = consumed;
+                }
                 let publish_target = if budget_requires_publish {
-                    budget_target.min(request.row_ceiling)
+                    budget_target.min(row_ceiling)
                 } else {
                     publish_target
                 };
@@ -363,13 +366,18 @@ impl Repo {
                 published_rows = publish_target;
                 // The ceiling is reached while the stream still has rows; pause for Continue Loading
                 // instead of retaining an unbounded revset in memory.
-                if published_rows >= request.row_ceiling {
+                if published_rows >= row_ceiling {
                     if guard.is_canceled() {
                         on_event(LogGraphEvent::Canceled);
-                    } else {
-                        on_event(LogGraphEvent::Paused);
+                        return Ok(());
                     }
-                    return Ok(());
+                    on_event(LogGraphEvent::Paused);
+                    let Some(higher_ceiling) = guard.wait_for_higher_row_ceiling(row_ceiling)
+                    else {
+                        on_event(LogGraphEvent::Canceled);
+                        return Ok(());
+                    };
+                    row_ceiling = higher_ceiling;
                 }
                 next_threshold = next_threshold.max(published_rows).saturating_mul(2);
             }
@@ -381,13 +389,15 @@ impl Repo {
         }
 
         let total_rows = raw_rows.len() as u32;
-        if total_rows > published_rows || published_rows == 0 {
-            if !self
+        if last_reported_consumed != consumed {
+            report_graph_progress(consumed, published_rows, guard, on_event);
+        }
+        if (total_rows > published_rows || published_rows == 0)
+            && !self
                 .publish_log_graph_prefix(&repo, &raw_rows, total_rows, true, guard, on_event)?
-            {
-                on_event(LogGraphEvent::Canceled);
-                return Ok(());
-            }
+        {
+            on_event(LogGraphEvent::Canceled);
+            return Ok(());
         }
 
         if guard.is_canceled() {
@@ -419,21 +429,38 @@ impl Repo {
         } else {
             (threshold as usize + MAX_CONTINUOUS_CONNECTOR_ROWS).min(raw_rows.len())
         };
-        let window = &raw_rows[..window_len];
-        let Some(entries_with_lookahead) =
-            self.materialize_graph_entries_guarded(repo, window, Some(guard))?
+        let publish_len = (threshold as usize).min(window_len);
+        let Some(entries) =
+            self.materialize_graph_entries_guarded(repo, &raw_rows[..publish_len], Some(guard))?
         else {
             return Ok(false);
         };
         if guard.is_canceled() {
             return Ok(false);
         }
-        let layout = DagLayout::compute(&entries_with_lookahead);
+        let mut layout_inputs = entries.iter().map(DagLayoutInput::from).collect::<Vec<_>>();
+        let lookahead = &raw_rows[publish_len..window_len];
+        if !lookahead.is_empty() {
+            let lookahead_ids = lookahead
+                .iter()
+                .map(|(commit, _)| commit.id().hex())
+                .collect::<HashSet<_>>();
+            let refs = CommitRefIndex::build(repo, self.workspace_name.as_ref(), &lookahead_ids);
+            layout_inputs.extend(lookahead.iter().map(|(commit, edges)| {
+                let commit_id = commit.id().hex();
+                DagLayoutInput {
+                    parents: commit.parent_ids().iter().map(|id| id.hex()).collect(),
+                    is_working_copy: refs.is_working_copy(&commit_id),
+                    has_ref: refs.has_layout_ref(&commit_id),
+                    commit_id,
+                    edges: edges.clone(),
+                }
+            }));
+        }
+        let layout = DagLayout::compute_inputs(&layout_inputs);
         if guard.is_canceled() {
             return Ok(false);
         }
-        let publish_len = (threshold as usize).min(entries_with_lookahead.len());
-        let entries = entries_with_lookahead[..publish_len].to_vec();
         let rows = layout.rows[..publish_len].to_vec();
         on_event(LogGraphEvent::Snapshot(LogGraphSnapshot {
             entries,
@@ -505,51 +532,10 @@ impl Repo {
                 return Ok(None);
             }
             let empty_checks_started = Instant::now();
-            let (empty_states, empty_check_count) = {
-                let span = tracing::debug_span!("log_graph.empty_checks");
-                let _entered = span.enter();
-                let displayed_tree_ids = rows
-                    .iter()
-                    .map(|(commit, _)| (commit.id().clone(), commit.tree_ids()))
-                    .collect::<HashMap<_, _>>();
-                // Resolve what's cheap (cached, or a single displayed parent to compare trees
-                // against) sequentially; defer the rest — chiefly merge commits, whose emptiness
-                // needs a tree merge — to a parallel pass, since those dominate a large `all()`.
-                let mut states = vec![false; rows.len()];
-                let mut newly = Vec::new();
-                let mut to_compute: Vec<(usize, &jj_lib::commit::Commit)> = Vec::new();
-                {
-                    let cache = self.empty_commit_cache.read().unwrap();
-                    for (ix, (commit, _)) in rows.iter().enumerate() {
-                        if let Some(&cached) = cache.get(commit.id()) {
-                            states[ix] = cached;
-                        } else if let [parent_id] = commit.parent_ids()
-                            && let Some(parent_tree_ids) = displayed_tree_ids.get(parent_id)
-                        {
-                            let is_empty = commit.tree_ids() == *parent_tree_ids;
-                            states[ix] = is_empty;
-                            newly.push((commit.id().clone(), is_empty));
-                        } else {
-                            to_compute.push((ix, commit));
-                        }
-                    }
-                }
-                let empty_check_count = to_compute.len();
-                for batch in to_compute.chunks(BACKGROUND_LOG_BATCH_ROWS as usize) {
-                    if guard.is_some_and(RequestGuard::is_canceled) {
-                        return Ok(None);
-                    }
-                    for (ix, id, is_empty) in compute_empty_states(repo, batch) {
-                        states[ix] = is_empty;
-                        newly.push((id, is_empty));
-                    }
-                }
-                bounded_extend(
-                    &mut self.empty_commit_cache.write().unwrap(),
-                    newly,
-                    EMPTY_COMMIT_CACHE_MAX_ENTRIES,
-                );
-                (states, empty_check_count)
+            let Some((empty_states, empty_check_count)) =
+                self.empty_states_guarded(repo, rows, guard)?
+            else {
+                return Ok(None);
             };
             tracing::debug!(
                 elapsed_us = empty_checks_started.elapsed().as_micros() as u64,
@@ -602,6 +588,56 @@ impl Repo {
 
             Ok(Some(entries))
         })
+    }
+
+    fn empty_states_guarded(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
+        guard: Option<&RequestGuard<'_>>,
+    ) -> CoreResult<Option<(Vec<bool>, usize)>> {
+        let span = tracing::debug_span!("log_graph.empty_checks");
+        let _entered = span.enter();
+        let displayed_tree_ids = rows
+            .iter()
+            .map(|(commit, _)| (commit.id().clone(), commit.tree_ids()))
+            .collect::<HashMap<_, _>>();
+        // Resolve cached and single-displayed-parent rows cheaply; merge-tree checks dominate large histories, so defer those to the bounded parallel pass.
+        let mut states = vec![false; rows.len()];
+        let mut newly = Vec::new();
+        let mut to_compute: Vec<(usize, &jj_lib::commit::Commit)> = Vec::new();
+        {
+            let cache = self.empty_commit_cache.read().unwrap();
+            for (ix, (commit, _)) in rows.iter().enumerate() {
+                if let Some(&cached) = cache.get(commit.id()) {
+                    states[ix] = cached;
+                } else if let [parent_id] = commit.parent_ids()
+                    && let Some(parent_tree_ids) = displayed_tree_ids.get(parent_id)
+                {
+                    let is_empty = commit.tree_ids() == *parent_tree_ids;
+                    states[ix] = is_empty;
+                    newly.push((commit.id().clone(), is_empty));
+                } else {
+                    to_compute.push((ix, commit));
+                }
+            }
+        }
+        let empty_check_count = to_compute.len();
+        for batch in to_compute.chunks(BACKGROUND_LOG_BATCH_ROWS as usize) {
+            if guard.is_some_and(RequestGuard::is_canceled) {
+                return Ok(None);
+            }
+            for (ix, id, is_empty) in compute_empty_states(repo, batch) {
+                states[ix] = is_empty;
+                newly.push((id, is_empty));
+            }
+        }
+        bounded_extend(
+            &mut self.empty_commit_cache.write().unwrap(),
+            newly,
+            EMPTY_COMMIT_CACHE_MAX_ENTRIES,
+        );
+        Ok(Some((states, empty_check_count)))
     }
 
     /// Refuse to rewrite `commit` (resolved from `rev`) when it is immutable, using the same `immutable()` revset that drives `ChangeInfo::is_immutable`; rewrite paths that bypass the jj CLI get no immutability enforcement from jj-lib and must call this themselves.
@@ -892,6 +928,20 @@ impl Repo {
         }
         Ok(ids)
     }
+}
+
+fn report_graph_progress(
+    consumed_rows: u64,
+    materialized_rows: u32,
+    guard: &RequestGuard<'_>,
+    on_event: &mut impl FnMut(LogGraphEvent),
+) {
+    on_event(LogGraphEvent::Progress(LogGraphProgress {
+        consumed_rows,
+        materialized_rows: u64::from(materialized_rows),
+        elapsed: guard.elapsed(),
+        first_result_budget_expired: guard.first_result_budget_expired(),
+    }));
 }
 
 #[cfg(test)]

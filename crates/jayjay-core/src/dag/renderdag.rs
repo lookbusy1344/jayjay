@@ -6,15 +6,16 @@ use std::collections::{HashMap, HashSet};
 
 use renderdag::{Ancestor, GraphRow, GraphRowRenderer, LinkLine, NodeLine, PadLine, Renderer};
 
+use super::projection::DagLayoutInput;
 use super::projection::EdgeId;
 use super::row_shape::{
     DagContinuation, DagContinuationDirection, DagEdgeKind, DagLayout, DagLinkCell, DagRowShape,
     DagVerticalCell,
 };
-use crate::types::{EdgeType, GraphEntry};
+use crate::types::EdgeType;
 
 pub(super) fn render(
-    entries: &[GraphEntry],
+    entries: &[DagLayoutInput],
     cut_edges: &std::collections::HashSet<EdgeId>,
     continuations: &[Vec<DagContinuation>],
 ) -> DagLayout {
@@ -24,11 +25,11 @@ pub(super) fn render(
     let mut incoming = HashMap::new();
     let visible_commit_ids = entries
         .iter()
-        .map(|entry| entry.change.commit_id.id.as_str())
+        .map(|entry| entry.commit_id.as_str())
         .collect::<HashSet<_>>();
 
     for (source_index, entry) in entries.iter().enumerate() {
-        let commit_id = entry.change.commit_id.id.clone();
+        let commit_id = entry.commit_id.clone();
         let parents = entry
             .edges
             .iter()
@@ -67,7 +68,7 @@ pub(super) fn render(
 
 fn register_incoming_edges(
     incoming: &mut HashMap<String, DagEdgeKind>,
-    entry: &GraphEntry,
+    entry: &DagLayoutInput,
     source_index: usize,
     cut_edges: &std::collections::HashSet<EdgeId>,
 ) {
@@ -248,7 +249,9 @@ fn edge_kind(flags: LinkLine, direct: LinkLine, indirect: LinkLine) -> Option<Da
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ChangeInfo, CommitAuthor, GraphEdge, NewChangeEligibility, ShortId};
+    use crate::types::{
+        ChangeInfo, CommitAuthor, GraphEdge, GraphEntry, NewChangeEligibility, ShortId,
+    };
 
     fn entry(commit_id: &str, edges: &[(&str, EdgeType)]) -> GraphEntry {
         GraphEntry {

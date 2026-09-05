@@ -15,11 +15,12 @@ extension RepoViewModel {
         switch event {
             case let .snapshot(snapshot):
                 applySnapshotEvent(snapshot, context: context)
-            case .progress:
-                break
+            case let .progress(_, _, _, firstResultBudgetExpired):
+                applyGraphProgress(firstResultBudgetExpired: firstResultBudgetExpired)
             case .paused:
-                finishGraphLoad(generation: context.generation)
                 graphPaused = true
+                isLoading = false
+                isRefreshingInFlight = false
                 resumePendingBackgroundRefresh()
             case .finished:
                 finishGraphLoad(generation: context.generation)
@@ -36,6 +37,12 @@ extension RepoViewModel {
                 error = message
                 resumePendingBackgroundRefresh()
         }
+    }
+
+    @MainActor
+    private func applyGraphProgress(firstResultBudgetExpired: Bool) {
+        guard !graphFirstSnapshotApplied, firstResultBudgetExpired else { return }
+        graphLoadSlow = true
     }
 
     @MainActor
@@ -57,6 +64,9 @@ extension RepoViewModel {
         guard graphLoadGeneration == generation else { return }
         graphLoadToken = nil
         graphLoadGeneration = nil
+        graphLoadSlowTask?.cancel()
+        graphLoadSlowTask = nil
+        graphLoadSlow = false
         graphLoadCanceling = false
         if graphRefreshGeneration == generation {
             isLoading = false

@@ -28,6 +28,10 @@ impl JayJayGraphLoadToken {
     fn is_canceled(&self) -> bool {
         self.inner.is_canceled()
     }
+
+    fn continue_loading(&self, row_ceiling: u32) {
+        self.inner.continue_loading(row_ceiling);
+    }
 }
 
 /// Progressive graph-load request. `first_result_budget_ms` is the millisecond form of the core
@@ -97,8 +101,9 @@ impl From<core::LogGraphSnapshot> for LogGraphSnapshot {
     }
 }
 
-/// One update from a running session. A session emits zero or more `Snapshot`/`Progress` events,
-/// then exactly one terminal event (`Finished`, `Paused`, `Canceled`, or `Failed`).
+/// One update from a running session. A session emits zero or more
+/// `Snapshot`/`Progress`/`Paused` events, then exactly one terminal event (`Finished`, `Canceled`,
+/// or `Failed`).
 #[derive(uniffi::Enum)]
 pub enum LogGraphEvent {
     Snapshot {

@@ -67,11 +67,12 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     var refreshTask: Task<Void, Never>?
     @ObservationIgnored var graphLoadToken: JayJayGraphLoadToken?
     @ObservationIgnored var graphLoadGeneration: UInt64?
+    @ObservationIgnored var graphLoadSlowTask: Task<Void, Never>?
     @ObservationIgnored var graphRefreshGeneration: UInt64 = 0
     @ObservationIgnored var graphFirstSnapshotApplied = false
-    @ObservationIgnored var graphResumeFloor: Int?
     @ObservationIgnored var graphPendingSelectedChange: ChangeDetail?
     var graphPaused = false
+    var graphLoadSlow = false
     var graphLoadCanceling = false
     var graphRowCeiling: UInt32 = 0
     var graphLoadActionLabel: String {
@@ -145,6 +146,8 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
         isShuttingDown = true
         graphLoadToken?.cancel()
         graphLoadToken = nil
+        graphLoadSlowTask?.cancel()
+        graphLoadSlowTask = nil
         repoTasks.values.forEach { $0.cancel() }
         refreshTask = nil
         prFetchTask = nil

@@ -26,6 +26,7 @@ pub(super) fn sidebar(
         show_load_more,
         show_continue,
         default_revset,
+        graph_load_slow,
         bookmarks,
     ) = {
         let vm = view.vm.read(cx);
@@ -36,6 +37,7 @@ pub(super) fn sidebar(
             vm.error.is_none() && vm.can_load_more && !vm.graph.changes.is_empty(),
             vm.error.is_none() && vm.loading.graph_paused && !vm.graph.changes.is_empty(),
             vm.revset_is_default(),
+            vm.loading.graph_load_slow,
             vm.graph.bookmarks.clone(),
         )
     };
@@ -190,6 +192,18 @@ pub(super) fn sidebar(
     }
     if let Some(banner) = push_follow_up_banner(view, t, cx) {
         col = col.child(banner);
+    }
+    if graph_load_slow {
+        col = col.child(
+            div()
+                .px(px(12.))
+                .py(px(8.))
+                .border_b_1()
+                .border_color(rgb(t.row_border))
+                .text_size(px(FONT_META))
+                .text_color(rgb(t.fg_dim))
+                .child("Still loading history…"),
+        );
     }
     col = col.child(div().flex_1().min_h_0().child(body));
     if show_commit_box {

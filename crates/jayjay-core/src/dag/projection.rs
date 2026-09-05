@@ -3,10 +3,33 @@ use std::collections::{HashMap, HashSet};
 
 use super::renderdag;
 use super::row_shape::{DagContinuation, DagContinuationDirection, DagEdgeKind, DagLayout};
-use crate::types::{EdgeType, GraphEntry};
+use crate::types::{EdgeType, GraphEdge, GraphEntry};
 
 pub const MAX_CONTINUOUS_CONNECTOR_ROWS: usize = 12;
 pub const MAX_VISIBLE_DAG_LANES: u32 = 8;
+
+#[derive(Debug, Clone)]
+pub(crate) struct DagLayoutInput {
+    pub commit_id: String,
+    pub parents: Vec<String>,
+    pub edges: Vec<GraphEdge>,
+    pub is_working_copy: bool,
+    pub has_ref: bool,
+}
+
+impl From<&GraphEntry> for DagLayoutInput {
+    fn from(entry: &GraphEntry) -> Self {
+        Self {
+            commit_id: entry.change.commit_id.id.clone(),
+            parents: entry.change.parents.clone(),
+            edges: entry.edges.clone(),
+            is_working_copy: entry.change.is_working_copy,
+            has_ref: entry.change.is_working_copy
+                || !entry.change.bookmarks.is_empty()
+                || !entry.change.workspaces.is_empty(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct EdgeId {
@@ -28,12 +51,17 @@ struct EdgeCandidate<'a> {
 
 impl DagLayout {
     pub fn compute(entries: &[GraphEntry]) -> Self {
+        let inputs = entries.iter().map(DagLayoutInput::from).collect::<Vec<_>>();
+        Self::compute_inputs(&inputs)
+    }
+
+    pub(crate) fn compute_inputs(entries: &[DagLayoutInput]) -> Self {
         let span = tracing::debug_span!("dag.layout_projection", rows = entries.len());
         let _entered = span.enter();
         let commit_rows = entries
             .iter()
             .enumerate()
-            .map(|(index, entry)| (entry.change.commit_id.id.as_str(), index))
+            .map(|(index, entry)| (entry.commit_id.as_str(), index))
             .collect::<HashMap<_, _>>();
         let protected_spine = protected_first_parent_spine(entries, &commit_rows);
         let candidates = edge_candidates(entries, &commit_rows);
@@ -90,14 +118,14 @@ impl DagLayout {
 }
 
 fn edge_candidates<'a>(
-    entries: &'a [GraphEntry],
+    entries: &'a [DagLayoutInput],
     commit_rows: &HashMap<&str, usize>,
 ) -> Vec<EdgeCandidate<'a>> {
     entries
         .iter()
         .enumerate()
         .flat_map(|(source_index, entry)| {
-            let first_parent_id = entry.change.parents.first().map(String::as_str);
+            let first_parent_id = entry.parents.first().map(String::as_str);
             entry
                 .edges
                 .iter()
@@ -113,19 +141,19 @@ fn edge_candidates<'a>(
                         .map(|target_index| source_index.abs_diff(target_index))
                         .unwrap_or(usize::MAX);
                     let target_has_ref = target_index
-                        .map(|index| change_has_ref(&entries[index]))
+                        .map(|index| entries[index].has_ref)
                         .unwrap_or(false);
                     Some(EdgeCandidate {
                         id: EdgeId {
                             source_index,
                             edge_index,
                         },
-                        source_id: entry.change.commit_id.as_str(),
+                        source_id: entry.commit_id.as_str(),
                         target_id: edge.target.as_str(),
                         target_index,
                         kind,
                         span,
-                        has_ref: change_has_ref(entry) || target_has_ref,
+                        has_ref: entry.has_ref || target_has_ref,
                         is_adjacent_first_parent: edge.edge_type == EdgeType::Direct
                             && first_parent_id == Some(edge.target.as_str())
                             && span == 1,
@@ -135,24 +163,18 @@ fn edge_candidates<'a>(
         .collect()
 }
 
-fn change_has_ref(entry: &GraphEntry) -> bool {
-    entry.change.is_working_copy
-        || !entry.change.bookmarks.is_empty()
-        || !entry.change.workspaces.is_empty()
-}
-
 fn protected_first_parent_spine(
-    entries: &[GraphEntry],
+    entries: &[DagLayoutInput],
     commit_rows: &HashMap<&str, usize>,
 ) -> HashSet<EdgeId> {
     let mut protected = HashSet::new();
     let mut current = entries
         .iter()
-        .position(|entry| entry.change.is_working_copy)
+        .position(|entry| entry.is_working_copy)
         .or((!entries.is_empty()).then_some(0));
 
     while let Some(source_index) = current {
-        let Some(first_parent_id) = entries[source_index].change.parents.first() else {
+        let Some(first_parent_id) = entries[source_index].parents.first() else {
             break;
         };
         let Some((edge_index, edge)) =
@@ -181,7 +203,7 @@ fn protected_first_parent_spine(
 }
 
 fn build_continuations(
-    entries: &[GraphEntry],
+    entries: &[DagLayoutInput],
     candidates: &[EdgeCandidate<'_>],
     cut_edges: &HashSet<EdgeId>,
 ) -> Vec<Vec<DagContinuation>> {

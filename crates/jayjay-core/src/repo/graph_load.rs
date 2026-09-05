@@ -1,5 +1,5 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::dag::DagLayout;
@@ -9,15 +9,23 @@ use crate::types::{CoreError, GraphEntry};
 pub const INITIAL_LOG_BATCH_ROWS: u32 = 50;
 pub const BACKGROUND_LOG_BATCH_ROWS: u32 = 500;
 pub const FIRST_RESULT_BUDGET: Duration = Duration::from_secs(10);
-/// Retained-row ceiling before a session pauses for an explicit Continue Loading. Bounds resident
-/// memory on an unbounded revset (e.g. `all()`) rather than loading every row automatically.
-pub const MAX_AUTO_LOADED_ROWS: u32 = 10_000;
+/// Conservative retained-memory budget per graph row. The 344k-revision Rust checkout measured an
+/// incremental peak RSS of about 34 KiB/row between 50 and 10,000 retained rows; round up so the
+/// automatic ceiling includes allocator and shell-transfer headroom.
+pub const LOG_GRAPH_MEMORY_BYTES_PER_ROW_BUDGET: u64 = 40_000;
+pub const MAX_AUTO_LOADED_MEMORY_BYTES: u64 = 400_000_000;
+/// Retained-row ceiling before a session pauses for an explicit Continue Loading. Deriving it from
+/// measured memory keeps an unbounded revset (e.g. `all()`) inside the named automatic-load budget.
+pub const MAX_AUTO_LOADED_ROWS: u32 =
+    (MAX_AUTO_LOADED_MEMORY_BYTES / LOG_GRAPH_MEMORY_BYTES_PER_ROW_BUDGET) as u32;
 
 /// A cooperative cancellation flag for one graph-load session, shared between the core worker
 /// and whichever shell owns the session's lifetime.
 #[derive(Clone, Debug, Default)]
 pub struct GraphLoadToken {
     canceled: Arc<AtomicBool>,
+    row_ceiling: Arc<AtomicU32>,
+    continuation: Arc<(Mutex<()>, Condvar)>,
 }
 
 impl GraphLoadToken {
@@ -27,10 +35,35 @@ impl GraphLoadToken {
 
     pub fn cancel(&self) {
         self.canceled.store(true, Ordering::SeqCst);
+        self.continuation.1.notify_all();
     }
 
     pub fn is_canceled(&self) -> bool {
         self.canceled.load(Ordering::SeqCst)
+    }
+
+    pub fn continue_loading(&self, row_ceiling: u32) {
+        self.row_ceiling.fetch_max(row_ceiling, Ordering::SeqCst);
+        self.continuation.1.notify_all();
+    }
+
+    pub(crate) fn initialize_row_ceiling(&self, row_ceiling: u32) {
+        self.row_ceiling.store(row_ceiling, Ordering::SeqCst);
+    }
+
+    pub(crate) fn wait_for_higher_row_ceiling(&self, current: u32) -> Option<u32> {
+        let (lock, condition) = &*self.continuation;
+        let mut waiting = lock.lock().unwrap();
+        loop {
+            if self.is_canceled() {
+                return None;
+            }
+            let row_ceiling = self.row_ceiling.load(Ordering::SeqCst);
+            if row_ceiling > current {
+                return Some(row_ceiling);
+            }
+            waiting = condition.wait(waiting).unwrap();
+        }
     }
 }
 
@@ -94,6 +127,10 @@ impl<'a> RequestGuard<'a> {
     ) -> bool {
         published_rows == 0 && available_rows > 0 && self.first_result_budget_expired()
     }
+
+    pub(crate) fn wait_for_higher_row_ceiling(&self, current: u32) -> Option<u32> {
+        self.token.wait_for_higher_row_ceiling(current)
+    }
 }
 
 /// A request to progressively load a log graph. See `dag-loading-performance-plan.md`.
@@ -139,15 +176,16 @@ pub struct LogGraphProgress {
     pub first_result_budget_expired: bool,
 }
 
-/// One update from a running graph-load session. A session emits zero or more `Snapshot`/`Progress`
-/// events, then exactly one terminal event (`Finished`, `Paused`, `Canceled`, or `Failed`).
+/// One update from a running graph-load session. A session emits zero or more
+/// `Snapshot`/`Progress`/`Paused` events, then exactly one terminal event (`Finished`, `Canceled`,
+/// or `Failed`).
 #[derive(Debug)]
 pub enum LogGraphEvent {
     Snapshot(LogGraphSnapshot),
     Progress(LogGraphProgress),
     Finished,
-    /// The retained-row ceiling was reached with more history still available. The last published
-    /// snapshot stands; a Continue Loading action resumes with a higher ceiling.
+    /// The retained-row ceiling was reached with more history still available. The worker waits;
+    /// a Continue Loading action raises the token's ceiling and resumes the same stream.
     Paused,
     Canceled,
     Failed(CoreError),
@@ -156,7 +194,6 @@ pub enum LogGraphEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
     struct FakeClock {
         base: Instant,
@@ -246,5 +283,15 @@ mod tests {
         clone.cancel();
 
         assert!(token.is_canceled());
+    }
+
+    #[test]
+    fn continuation_raises_the_session_ceiling() {
+        let token = GraphLoadToken::new();
+        token.initialize_row_ceiling(10_000);
+
+        token.continue_loading(20_000);
+
+        assert_eq!(token.wait_for_higher_row_ceiling(10_000), Some(20_000));
     }
 }

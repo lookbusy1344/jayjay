@@ -122,28 +122,39 @@ fn main() {
     let open_elapsed = open_started.elapsed();
 
     // The default ceiling keeps a huge revset bounded (it pauses rather than materializing every
-    // row); pass --full to profile a complete load on a repository small enough to finish.
+    // row); pass --ceiling N to compare retained-memory plateaus, or --full on a small repository.
     let mut request = LogGraphRequest::new(revset.clone());
     if args.iter().any(|arg| arg == "--full") {
         request.row_ceiling = u32::MAX;
+    } else if let Some(index) = args.iter().position(|arg| arg == "--ceiling") {
+        request.row_ceiling = args
+            .get(index + 1)
+            .and_then(|value| value.parse().ok())
+            .expect("--ceiling requires a positive row count");
     }
 
     let mut rows_retained = 0u32;
+    let mut rows_consumed = 0u64;
     let mut snapshots = 0u32;
     let mut first_snapshot: Option<Duration> = None;
     let mut outcome = "no terminal event";
     let load_started = Instant::now();
-    repo.start_log_graph(request, GraphLoadToken::new(), |event| match event {
+    let token = GraphLoadToken::new();
+    let pause_token = token.clone();
+    repo.start_log_graph(request, token, |event| match event {
         LogGraphEvent::Snapshot(snapshot) => {
             first_snapshot.get_or_insert_with(|| load_started.elapsed());
             rows_retained = snapshot.loaded_rows;
             snapshots += 1;
         }
         LogGraphEvent::Finished => outcome = "finished",
-        LogGraphEvent::Paused => outcome = "paused at ceiling",
-        LogGraphEvent::Canceled => outcome = "canceled",
+        LogGraphEvent::Paused => {
+            outcome = "paused at ceiling";
+            pause_token.cancel();
+        }
+        LogGraphEvent::Canceled => {}
         LogGraphEvent::Failed(_) => outcome = "failed",
-        LogGraphEvent::Progress(_) => {}
+        LogGraphEvent::Progress(progress) => rows_consumed = progress.consumed_rows,
     });
     let load_elapsed = load_started.elapsed();
 
@@ -154,7 +165,7 @@ fn main() {
         None => println!("first snapshot: none published"),
     }
     println!(
-        "total load: {:.1} ms  ({outcome}, {snapshots} snapshots, {rows_retained} rows retained)",
+        "total load: {:.1} ms  ({outcome}, {snapshots} snapshots, {rows_consumed} rows consumed, {rows_retained} rows retained)",
         millis(load_elapsed)
     );
     if rows_retained > 0 {

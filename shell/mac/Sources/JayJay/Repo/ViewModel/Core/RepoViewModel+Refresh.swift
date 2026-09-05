@@ -90,14 +90,15 @@ extension RepoViewModel {
         }
         refreshTask?.cancel()
         graphLoadToken?.cancel()
+        graphLoadSlowTask?.cancel()
         graphRefreshGeneration &+= 1
         let generation = graphRefreshGeneration
         isRefreshingInFlight = true
         isLoading = graphEntries.isEmpty
         graphLoadCanceling = false
+        graphLoadSlow = false
         graphPaused = false
         graphFirstSnapshotApplied = false
-        graphResumeFloor = nil
         graphPendingSelectedChange = nil
         canLoadMore = false
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
@@ -119,6 +120,17 @@ extension RepoViewModel {
         let token = JayJayGraphLoadToken()
         graphLoadToken = token
         graphLoadGeneration = generation
+        let request = Self.graphRequest(revset: context.revset, rowCeiling: graphRowCeiling)
+        graphLoadSlowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int64(clamping: request.firstResultBudgetMs)))
+            guard !Task.isCancelled,
+                  let self,
+                  graphRefreshGeneration == generation,
+                  !self.graphFirstSnapshotApplied,
+                  graphLoadToken != nil
+            else { return }
+            graphLoadSlow = true
+        }
         let observer = MainActorLogGraphObserver { [weak self] event in
             self?.applyLogGraphEvent(event, context: context)
         }
@@ -128,7 +140,7 @@ extension RepoViewModel {
             includeSubmoduleStatuses: includeSubmoduleStatuses,
             token: token,
             observer: observer,
-            request: Self.graphRequest(revset: context.revset, rowCeiling: graphRowCeiling)
+            request: request
         ))
     }
 
@@ -190,15 +202,11 @@ extension RepoViewModel {
         preferredCommitId: String?,
         preferredRev: String?
     ) {
-        if let graphResumeFloor,
-           snapshot.entries.count < graphResumeFloor,
-           !snapshot.isComplete
-        {
-            return
-        }
-        graphResumeFloor = nil
         let isFirst = !graphFirstSnapshotApplied
         graphFirstSnapshotApplied = true
+        graphLoadSlowTask?.cancel()
+        graphLoadSlowTask = nil
+        graphLoadSlow = false
         dagLayout = DAGLayout(computed: snapshot.layout)
 
         if isFirst {
@@ -263,16 +271,16 @@ extension RepoViewModel {
     }
 
     func continueLoading() {
-        guard graphPaused else { return }
-        let resumeFloor = graphEntries.count
+        guard graphPaused, let graphLoadToken else { return }
         let currentCeiling = graphRowCeiling == 0
             ? defaultLogGraphRequest(revset: revset).rowCeiling
             : graphRowCeiling
         graphRowCeiling = currentCeiling.multipliedReportingOverflow(by: 2).overflow
             ? UInt32.max
             : currentCeiling * 2
-        refresh()
-        graphResumeFloor = resumeFloor
+        graphPaused = false
+        isRefreshingInFlight = true
+        graphLoadToken.continueLoading(rowCeiling: graphRowCeiling)
     }
 
     func loadMore() {

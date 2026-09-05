@@ -1,13 +1,14 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::mpsc::{Sender, TryRecvError};
 use std::time::Duration;
 
-use futures::StreamExt as _;
-use futures::channel::mpsc::UnboundedSender;
 use gpui::{AppContext, Context, Task};
 use jayjay_core::{CoreResult, Error, Repo};
 
 use super::RepoViewModel;
+
+const BACKGROUND_STREAM_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 impl RepoViewModel {
     pub(in crate::repo) fn background_update<T>(
@@ -34,18 +35,29 @@ impl RepoViewModel {
     /// stop early.
     pub(in crate::repo) fn background_stream<T>(
         cx: &mut Context<Self>,
-        produce: impl FnOnce(UnboundedSender<T>) + Send + 'static,
+        produce: impl FnOnce(Sender<T>) + Send + 'static,
         mut on_item: impl FnMut(&mut Self, T, &mut Context<Self>) + 'static,
     ) where
         T: Send + 'static,
     {
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
-        cx.background_spawn(async move { produce(tx) }).detach();
+        let (tx, rx) = std::sync::mpsc::channel();
+        drop(std::thread::spawn(move || produce(tx)));
         cx.spawn(async move |this, cx| {
-            while let Some(item) = rx.next().await {
-                if this.update(cx, |vm, cx| on_item(vm, item, cx)).is_err() {
-                    break;
+            loop {
+                loop {
+                    match rx.try_recv() {
+                        Ok(item) => {
+                            if this.update(cx, |vm, cx| on_item(vm, item, cx)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => return,
+                    }
                 }
+                cx.background_executor()
+                    .timer(BACKGROUND_STREAM_POLL_INTERVAL)
+                    .await;
             }
         })
         .detach();

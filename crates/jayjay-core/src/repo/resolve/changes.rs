@@ -100,6 +100,16 @@ impl CommitRefIndex {
             has_remote_ref: self.remote_ref_commits.contains(commit_id),
         }
     }
+
+    pub(crate) fn is_working_copy(&self, commit_id: &str) -> bool {
+        self.working_copy_commit_id.as_deref() == Some(commit_id)
+    }
+
+    pub(crate) fn has_layout_ref(&self, commit_id: &str) -> bool {
+        self.is_working_copy(commit_id)
+            || self.bookmarks.contains_key(commit_id)
+            || self.workspaces.contains_key(commit_id)
+    }
 }
 
 fn insert_ref(

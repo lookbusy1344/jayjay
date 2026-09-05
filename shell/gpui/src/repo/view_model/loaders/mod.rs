@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use gpui::{Context, SharedString};
 use jayjay_core::{
-    BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, GraphLoadToken,
-    LogGraphEvent, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo, WorkspaceInfo,
-    build_default_revset,
+    BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, FIRST_RESULT_BUDGET,
+    GraphLoadToken, LogGraphEvent, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo,
+    WorkspaceInfo, build_default_revset,
 };
 
 use super::RepoViewModel;
@@ -132,17 +132,27 @@ impl RepoViewModel {
     }
 
     pub fn refresh(&mut self, is_auto_triggered: bool, cx: &mut Context<Self>) {
+        self.refresh_with_working_copy_snapshot(is_auto_triggered, true, cx);
+    }
+
+    pub(super) fn refresh_with_working_copy_snapshot(
+        &mut self,
+        is_auto_triggered: bool,
+        snapshot_working_copy: bool,
+        cx: &mut Context<Self>,
+    ) {
         let selection = self
             .selected
             .and_then(|ix| self.graph.changes.get(ix))
             .map(|c| (c.change_id.id.clone(), c.commit_id.id.clone()));
-        self.refresh_preferring(is_auto_triggered, selection, cx);
+        self.refresh_preferring(is_auto_triggered, snapshot_working_copy, selection, cx);
     }
 
     /// `selection` is (change id, commit id): the commit wins, the change id is the fallback once a rewrite retired that commit.
     pub(super) fn refresh_preferring(
         &mut self,
         is_auto_triggered: bool,
+        snapshot_working_copy: bool,
         selection: Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
@@ -176,18 +186,28 @@ impl RepoViewModel {
         let token = GraphLoadToken::new();
         self.loading.graph_session = Some(token.clone());
         self.loading.graph_session_gen = Some(generation);
+        self.loading.graph_in_flight_generations.insert(generation);
         self.loading.graph_session_canceling = false;
         self.loading.graph_first_snapshot_applied = false;
-        self.loading.graph_resume_floor = None;
+        self.loading.graph_load_slow = false;
         self.loading.graph_paused = false;
         let row_ceiling = self.effective_row_ceiling();
+        Self::delayed_update(cx, FIRST_RESULT_BUDGET, move |vm, cx| {
+            if vm.loading.refresh_gen == generation
+                && !vm.loading.graph_first_snapshot_applied
+                && vm.loading.graph_session.is_some()
+            {
+                vm.loading.graph_load_slow = true;
+                cx.notify();
+            }
+        });
 
         Self::background_stream(
             cx,
             move |tx| {
-                let ancillary = refresh_ancillary_blocking(&repo);
+                let ancillary = refresh_ancillary_blocking(&repo, snapshot_working_copy);
                 let is_err = ancillary.is_err();
-                let _ = tx.unbounded_send(RefreshUpdate::Ancillary(ancillary));
+                let _ = tx.send(RefreshUpdate::Ancillary(ancillary));
                 if is_err {
                     return;
                 }
@@ -196,7 +216,7 @@ impl RepoViewModel {
                     ..LogGraphRequest::new(revset)
                 };
                 repo.start_log_graph(request, token, |event| {
-                    let _ = tx.unbounded_send(RefreshUpdate::Graph(event));
+                    let _ = tx.send(RefreshUpdate::Graph(event));
                 });
             },
             move |vm, update, cx| {
@@ -229,16 +249,22 @@ impl RepoViewModel {
         }
     }
 
-    /// Resume a session that paused at the row ceiling, doubling the ceiling so the next prefix
-    /// loads more history. Preserves the current selection; a no-op when not paused.
+    /// Resume the session paused at the row ceiling without restarting its repository graph stream.
     pub fn continue_loading(&mut self, cx: &mut Context<Self>) {
         if !self.loading.graph_paused {
             return;
         }
-        let resume_floor = self.graph.entries.len();
-        self.loading.graph_row_ceiling = self.effective_row_ceiling().saturating_mul(2);
-        self.refresh(false, cx);
-        self.loading.graph_resume_floor = Some(resume_floor);
+        let Some(token) = self.loading.graph_session.clone() else {
+            return;
+        };
+        let row_ceiling = self.effective_row_ceiling().saturating_mul(2);
+        self.loading.graph_row_ceiling = row_ceiling;
+        self.loading.graph_paused = false;
+        self.begin_refreshing(cx);
+        self.loading
+            .graph_in_flight_generations
+            .insert(self.loading.refresh_gen);
+        token.continue_loading(row_ceiling);
     }
 
     /// Run an owed auto-refresh if one is pending and refreshes aren't suspended. Returns whether it
@@ -310,11 +336,21 @@ impl RepoViewModel {
                 }
                 self.apply_graph_snapshot(snapshot, previous_selection, cx);
             }
-            RefreshUpdate::Graph(LogGraphEvent::Progress(_)) => {}
+            RefreshUpdate::Graph(LogGraphEvent::Progress(progress)) => {
+                if self.loading.refresh_gen == generation
+                    && !self.loading.graph_first_snapshot_applied
+                    && progress.first_result_budget_expired
+                {
+                    self.loading.graph_load_slow = true;
+                    cx.notify();
+                }
+            }
             RefreshUpdate::Graph(LogGraphEvent::Paused) => {
-                self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen != generation {
                     return;
+                }
+                if self.loading.graph_in_flight_generations.remove(&generation) {
+                    self.finish_repo_task(cx);
                 }
                 // An owed refresh supersedes the paused prefix; otherwise expose Continue Loading.
                 if self.resume_pending_auto_refresh(cx) {
@@ -360,11 +396,15 @@ impl RepoViewModel {
     /// regardless of whether `generation` is still current — every `begin_refreshing()` needs
     /// exactly one matching `finish_repo_task()`, even for a superseded run.
     fn finish_graph_session(&mut self, generation: u64, cx: &mut Context<Self>) {
-        self.finish_repo_task(cx);
+        if self.loading.graph_in_flight_generations.remove(&generation) {
+            self.finish_repo_task(cx);
+        }
         if self.loading.graph_session_gen == Some(generation) {
             self.loading.graph_session = None;
             self.loading.graph_session_gen = None;
             self.loading.graph_session_canceling = false;
+            self.loading.more = false;
+            self.loading.graph_load_slow = false;
         }
     }
 
@@ -377,16 +417,9 @@ impl RepoViewModel {
         previous_selection: &Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
-        if !should_apply_resumed_snapshot(
-            self.loading.graph_resume_floor,
-            snapshot.entries.len(),
-            snapshot.is_complete,
-        ) {
-            return;
-        }
-        self.loading.graph_resume_floor = None;
         let is_first = !self.loading.graph_first_snapshot_applied;
         self.loading.graph_first_snapshot_applied = true;
+        self.loading.graph_load_slow = false;
 
         if snapshot.is_complete {
             self.can_load_more =
@@ -497,8 +530,13 @@ struct AncillaryRefreshData {
     current_operation_description: String,
 }
 
-fn refresh_ancillary_blocking(repo: &Repo) -> CoreResult<AncillaryRefreshData> {
-    repo.refresh_working_copy()?;
+fn refresh_ancillary_blocking(
+    repo: &Repo,
+    snapshot_working_copy: bool,
+) -> CoreResult<AncillaryRefreshData> {
+    if snapshot_working_copy {
+        repo.refresh_working_copy()?;
+    }
     let bookmarks = repo.list_bookmarks().unwrap_or_default();
     let workspaces = repo.workspace_list().ok();
     let pr_host_name = repo.pr_host_name();
@@ -511,26 +549,4 @@ fn refresh_ancillary_blocking(repo: &Repo) -> CoreResult<AncillaryRefreshData> {
         working_copy_stats,
         current_operation_description,
     })
-}
-
-fn should_apply_resumed_snapshot(
-    resume_floor: Option<usize>,
-    snapshot_rows: usize,
-    is_complete: bool,
-) -> bool {
-    is_complete || resume_floor.is_none_or(|floor| snapshot_rows >= floor)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_apply_resumed_snapshot;
-
-    #[test]
-    fn resumed_session_keeps_the_visible_prefix_until_it_catches_up() {
-        assert!(!should_apply_resumed_snapshot(Some(10_000), 50, false));
-        assert!(!should_apply_resumed_snapshot(Some(10_000), 6_400, false));
-        assert!(should_apply_resumed_snapshot(Some(10_000), 12_800, false));
-        assert!(should_apply_resumed_snapshot(Some(10_000), 8_000, true));
-        assert!(should_apply_resumed_snapshot(None, 50, false));
-    }
 }

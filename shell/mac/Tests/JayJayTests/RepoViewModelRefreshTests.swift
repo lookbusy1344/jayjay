@@ -79,7 +79,7 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
         XCTAssertEqual(viewModel.selectedChangeId, selectionAfterFirstSnapshot)
     }
 
-    func testContinueLoadingKeepsThePublishedPrefixUntilTheRestartCatchesUp() throws {
+    func testContinueLoadingKeepsThePublishedPrefixWhileTheSessionResumes() throws {
         let viewModel = try XCTUnwrap(viewModel)
         let entries = [
             GraphEntry(change: mockChangeInfo(changeId: "c-2", commitId: "222"), edges: []),
@@ -90,26 +90,14 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
             preferredCommitId: nil,
             preferredRev: nil
         )
-        viewModel.graphFirstSnapshotApplied = false
-        viewModel.graphResumeFloor = entries.count
+        viewModel.graphPaused = true
+        viewModel.graphLoadToken = JayJayGraphLoadToken()
 
-        viewModel.applyGraphSnapshot(
-            snapshot(entries: Array(entries.prefix(1)), isComplete: false),
-            preferredCommitId: nil,
-            preferredRev: nil
-        )
+        viewModel.continueLoading()
 
         XCTAssertEqual(viewModel.graphEntries, entries)
-        XCTAssertFalse(viewModel.graphFirstSnapshotApplied)
-
-        viewModel.applyGraphSnapshot(
-            snapshot(entries: Array(entries.prefix(1)), isComplete: true),
-            preferredCommitId: nil,
-            preferredRev: nil
-        )
-
-        XCTAssertEqual(viewModel.graphEntries, Array(entries.prefix(1)))
-        XCTAssertTrue(viewModel.graphFirstSnapshotApplied)
+        XCTAssertFalse(viewModel.graphPaused)
+        XCTAssertTrue(viewModel.isRefreshingInFlight)
     }
 
     func testCancelingRefreshTaskLatchesCoreGraphToken() async throws {
@@ -149,7 +137,7 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
         repo.finish(count: 2)
     }
 
-    func testPausedSessionLoadsAncillaryDataOnceAndContinuesWithHigherCeiling() async throws {
+    func testPausedSessionContinuesWithoutStartingAnotherRequest() async throws {
         let repo = BlockingGraphRepo(events: [.paused])
         let viewModel = RepoViewModel(
             path: "/tmp",
@@ -164,10 +152,42 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
         XCTAssertEqual(repo.ancillaryLoadCount, 1)
 
         viewModel.continueLoading()
-        try await waitUntil("the continued graph session pauses") { repo.requestCount == 2 && viewModel.graphPaused }
 
-        XCTAssertEqual(repo.requests[1].rowCeiling, initialRequest.rowCeiling * 2)
-        XCTAssertEqual(repo.ancillaryLoadCount, 2)
+        XCTAssertEqual(repo.requestCount, 1)
+        XCTAssertEqual(viewModel.graphRowCeiling, initialRequest.rowCeiling * 2)
+        XCTAssertEqual(repo.ancillaryLoadCount, 1)
+        XCTAssertFalse(viewModel.graphPaused)
+        XCTAssertTrue(viewModel.isRefreshingInFlight)
+    }
+
+    func testExpiredFirstResultBudgetShowsSlowStateUntilSnapshotArrives() throws {
+        let viewModel = try XCTUnwrap(viewModel)
+        let generation: UInt64 = 7
+        viewModel.graphRefreshGeneration = generation
+        let context = RepoGraphRefreshContext(
+            generation: generation,
+            preferredCommitId: nil,
+            preferredRev: nil,
+            revset: "all()",
+            isAutoTriggered: false
+        )
+
+        viewModel.applyLogGraphEvent(
+            .progress(
+                consumedRows: 0,
+                materializedRows: 0,
+                elapsedMs: 10000,
+                firstResultBudgetExpired: true
+            ),
+            context: context
+        )
+        XCTAssertTrue(viewModel.graphLoadSlow)
+
+        viewModel.applyLogGraphEvent(
+            .snapshot(snapshot: snapshot(entries: [], isComplete: false)),
+            context: context
+        )
+        XCTAssertFalse(viewModel.graphLoadSlow)
     }
 
     func testRefreshAppliesGraphEntriesAndTheirLayoutTogether() async throws {

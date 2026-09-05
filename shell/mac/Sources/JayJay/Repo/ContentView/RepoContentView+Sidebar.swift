@@ -38,6 +38,15 @@ extension RepoContentView {
                 pushFollowUpBanner(name)
                 Divider()
             }
+            if viewModel.graphLoadSlow {
+                Text("Still loading history…")
+                    .jayjayFont(11)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+            }
             DAGView(
                 entries: viewModel.graphEntries,
                 layout: viewModel.dagLayout,
