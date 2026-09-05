@@ -9,7 +9,7 @@ private struct RepoRefreshAncillary {
     let selectedChange: ChangeDetail?
 }
 
-private struct RepoGraphRefreshContext: Sendable {
+struct RepoGraphRefreshContext: Sendable {
     let generation: UInt64
     let preferredCommitId: String?
     let preferredRev: String?
@@ -97,6 +97,7 @@ extension RepoViewModel {
         graphLoadCanceling = false
         graphPaused = false
         graphFirstSnapshotApplied = false
+        graphResumeFloor = nil
         graphPendingSelectedChange = nil
         canLoadMore = false
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
@@ -189,6 +190,13 @@ extension RepoViewModel {
         preferredCommitId: String?,
         preferredRev: String?
     ) {
+        if let graphResumeFloor,
+           snapshot.entries.count < graphResumeFloor,
+           !snapshot.isComplete
+        {
+            return
+        }
+        graphResumeFloor = nil
         let isFirst = !graphFirstSnapshotApplied
         graphFirstSnapshotApplied = true
         dagLayout = DAGLayout(computed: snapshot.layout)
@@ -229,76 +237,6 @@ extension RepoViewModel {
         graphPendingSelectedChange = nil
     }
 
-    @MainActor
-    private func applyLogGraphEvent(
-        _ event: LogGraphEvent,
-        context: RepoGraphRefreshContext
-    ) {
-        guard !isShuttingDown else { return }
-        guard graphRefreshGeneration == context.generation else {
-            if case .snapshot = event {
-                return
-            }
-            if case .progress = event {
-                return
-            }
-            finishGraphLoad(generation: context.generation)
-            return
-        }
-
-        switch event {
-            case let .snapshot(snapshot):
-                if context.isAutoTriggered, isBackgroundRefreshSuspended {
-                    hasPendingBackgroundRefresh = true
-                    cancelGraphLoad()
-                    return
-                }
-                applyGraphSnapshot(
-                    snapshot,
-                    preferredCommitId: context.preferredCommitId,
-                    preferredRev: context.preferredRev
-                )
-            case .progress:
-                break
-            case .paused:
-                finishGraphLoad(generation: context.generation)
-                graphPaused = true
-                resumePendingBackgroundRefresh()
-            case .finished:
-                finishGraphLoad(generation: context.generation)
-                canLoadMore = Self.canLoadMore(revset: context.revset, loadedCount: graphEntries.count)
-                if context.isAutoTriggered, isBackgroundRefreshSuspended {
-                    hasPendingBackgroundRefresh = true
-                }
-                resumePendingBackgroundRefresh()
-            case .canceled:
-                finishGraphLoad(generation: context.generation)
-                resumePendingBackgroundRefresh()
-            case let .failed(message):
-                finishGraphLoad(generation: context.generation)
-                error = message
-                resumePendingBackgroundRefresh()
-        }
-    }
-
-    @MainActor
-    private func finishGraphLoad(generation: UInt64) {
-        guard graphLoadGeneration == generation else { return }
-        graphLoadToken = nil
-        graphLoadGeneration = nil
-        graphLoadCanceling = false
-        if graphRefreshGeneration == generation {
-            isLoading = false
-            isRefreshingInFlight = false
-        }
-    }
-
-    @MainActor
-    private func finishCanceledGraphLoad(generation: UInt64) {
-        finishGraphLoad(generation: generation)
-        resumePendingBackgroundRefresh()
-    }
-
     func refreshOrCancel() {
         if graphLoadToken != nil {
             cancelGraphLoad()
@@ -326,6 +264,7 @@ extension RepoViewModel {
 
     func continueLoading() {
         guard graphPaused else { return }
+        let resumeFloor = graphEntries.count
         let currentCeiling = graphRowCeiling == 0
             ? defaultLogGraphRequest(revset: revset).rowCeiling
             : graphRowCeiling
@@ -333,6 +272,7 @@ extension RepoViewModel {
             ? UInt32.max
             : currentCeiling * 2
         refresh()
+        graphResumeFloor = resumeFloor
     }
 
     func loadMore() {
@@ -374,34 +314,5 @@ extension RepoViewModel {
                 includeSubmoduleStatuses: includeSubmoduleStatuses
             )
         )
-    }
-
-    @MainActor
-    private func applyGraphLoadFailure(
-        _ error: any Error,
-        presence: WorkspacePresence,
-        generation: UInt64
-    ) {
-        guard graphRefreshGeneration == generation else { return }
-        finishGraphLoad(generation: generation)
-        applyRefreshFailure(error, presence: presence)
-    }
-}
-
-extension RepoViewModel {
-    /// A clean box follows the working copy; a typed draft is never replaced, even when @ moves to a described change.
-    func applyWorkingCopy(changeId: String, description: String) {
-        let previousDescription = workingCopyDescription
-        workingCopyDescription = description
-        guard !changeId.isEmpty else { return }
-        let identityChanged = changeId != workingCopyChangeId
-        let descriptionChanged = description != previousDescription
-        guard identityChanged || descriptionChanged else { return }
-        workingCopyChangeId = changeId
-        let boxIsClean = commitSummaryDraft == commitSummary(message: previousDescription)
-            && commitDescriptionDraft == commitBody(message: previousDescription)
-        guard boxIsClean else { return }
-        commitSummaryDraft = commitSummary(message: description)
-        commitDescriptionDraft = commitBody(message: description)
     }
 }

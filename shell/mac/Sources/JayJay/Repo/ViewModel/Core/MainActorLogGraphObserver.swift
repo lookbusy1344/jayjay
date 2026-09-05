@@ -16,7 +16,6 @@ final class MainActorLogGraphObserver: LogGraphObserver, @unchecked Sendable {
 
     deinit {
         continuation.finish()
-        consumer.cancel()
     }
 
     nonisolated func onEvent(event: LogGraphEvent) {

@@ -41,6 +41,22 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
         XCTAssertTrue(viewModel.dagLayout.rows.isEmpty)
     }
 
+    func testObserverDrainsAnEventQueuedImmediatelyBeforeRelease() async {
+        let delivered = expectation(description: "queued event delivered")
+
+        do {
+            let observer = MainActorLogGraphObserver { event in
+                guard case .finished = event else { return }
+                delivered.fulfill()
+            }
+            await Task.detached {
+                observer.onEvent(event: .finished)
+            }.value
+        }
+
+        await fulfillment(of: [delivered], timeout: 1)
+    }
+
     func testFirstSnapshotRestoresSelectionByCommitIdAndLaterSnapshotKeepsIt() throws {
         let viewModel = try XCTUnwrap(viewModel)
         let entries = try viewModel.repo.logGraph(revset: "all()")
@@ -61,6 +77,39 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
             preferredRev: entries[0].change.selectionRevision
         )
         XCTAssertEqual(viewModel.selectedChangeId, selectionAfterFirstSnapshot)
+    }
+
+    func testContinueLoadingKeepsThePublishedPrefixUntilTheRestartCatchesUp() throws {
+        let viewModel = try XCTUnwrap(viewModel)
+        let entries = [
+            GraphEntry(change: mockChangeInfo(changeId: "c-2", commitId: "222"), edges: []),
+            GraphEntry(change: mockChangeInfo(changeId: "c-1", commitId: "111"), edges: [])
+        ]
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: entries, isComplete: false),
+            preferredCommitId: nil,
+            preferredRev: nil
+        )
+        viewModel.graphFirstSnapshotApplied = false
+        viewModel.graphResumeFloor = entries.count
+
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: Array(entries.prefix(1)), isComplete: false),
+            preferredCommitId: nil,
+            preferredRev: nil
+        )
+
+        XCTAssertEqual(viewModel.graphEntries, entries)
+        XCTAssertFalse(viewModel.graphFirstSnapshotApplied)
+
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: Array(entries.prefix(1)), isComplete: true),
+            preferredCommitId: nil,
+            preferredRev: nil
+        )
+
+        XCTAssertEqual(viewModel.graphEntries, Array(entries.prefix(1)))
+        XCTAssertTrue(viewModel.graphFirstSnapshotApplied)
     }
 
     func testCancelingRefreshTaskLatchesCoreGraphToken() async throws {

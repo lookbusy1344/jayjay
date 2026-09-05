@@ -140,10 +140,13 @@ pub(super) fn sidebar(
                                 });
                             });
                         let dag_col = entries.get(ix).and_then(|entry| {
-                            dag_layout
-                                .rows
-                                .get(ix)
-                                .map(|row| dag_column(entry, row, &dag_geometry, &t))
+                            dag_layout.rows.get(ix).map(|row| {
+                                debug_assert_eq!(
+                                    row.commit_id, entry.change.commit_id.id,
+                                    "graph entries and DAG rows must remain index-aligned"
+                                );
+                                dag_column(entry, row, &dag_geometry, &t)
+                            })
                         });
                         dag_row(
                             DagRow {

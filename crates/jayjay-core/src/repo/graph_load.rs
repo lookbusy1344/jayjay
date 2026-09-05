@@ -86,6 +86,14 @@ impl<'a> RequestGuard<'a> {
     pub(crate) fn elapsed(&self) -> Duration {
         self.clock.now().saturating_duration_since(self.started_at)
     }
+
+    pub(crate) fn should_publish_first_result(
+        &self,
+        published_rows: u32,
+        available_rows: u32,
+    ) -> bool {
+        published_rows == 0 && available_rows > 0 && self.first_result_budget_expired()
+    }
 }
 
 /// A request to progressively load a log graph. See `dag-loading-performance-plan.md`.
@@ -217,6 +225,17 @@ mod tests {
 
         assert!(guard.is_canceled());
         assert!(!guard.first_result_budget_expired());
+    }
+
+    #[test]
+    fn expired_budget_requests_the_available_first_prefix() {
+        let clock = FakeClock::new();
+        let guard = RequestGuard::new(GraphLoadToken::new(), &clock, Duration::from_secs(10));
+        clock.advance(Duration::from_secs(10));
+
+        assert!(guard.should_publish_first_result(0, 17));
+        assert!(!guard.should_publish_first_result(1, 17));
+        assert!(!guard.should_publish_first_result(0, 0));
     }
 
     #[test]

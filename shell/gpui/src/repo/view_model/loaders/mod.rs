@@ -178,6 +178,7 @@ impl RepoViewModel {
         self.loading.graph_session_gen = Some(generation);
         self.loading.graph_session_canceling = false;
         self.loading.graph_first_snapshot_applied = false;
+        self.loading.graph_resume_floor = None;
         self.loading.graph_paused = false;
         let row_ceiling = self.effective_row_ceiling();
 
@@ -234,8 +235,10 @@ impl RepoViewModel {
         if !self.loading.graph_paused {
             return;
         }
+        let resume_floor = self.graph.entries.len();
         self.loading.graph_row_ceiling = self.effective_row_ceiling().saturating_mul(2);
         self.refresh(false, cx);
+        self.loading.graph_resume_floor = Some(resume_floor);
     }
 
     /// Run an owed auto-refresh if one is pending and refreshes aren't suspended. Returns whether it
@@ -374,6 +377,14 @@ impl RepoViewModel {
         previous_selection: &Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
+        if !should_apply_resumed_snapshot(
+            self.loading.graph_resume_floor,
+            snapshot.entries.len(),
+            snapshot.is_complete,
+        ) {
+            return;
+        }
+        self.loading.graph_resume_floor = None;
         let is_first = !self.loading.graph_first_snapshot_applied;
         self.loading.graph_first_snapshot_applied = true;
 
@@ -500,4 +511,26 @@ fn refresh_ancillary_blocking(repo: &Repo) -> CoreResult<AncillaryRefreshData> {
         working_copy_stats,
         current_operation_description,
     })
+}
+
+fn should_apply_resumed_snapshot(
+    resume_floor: Option<usize>,
+    snapshot_rows: usize,
+    is_complete: bool,
+) -> bool {
+    is_complete || resume_floor.is_none_or(|floor| snapshot_rows >= floor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_apply_resumed_snapshot;
+
+    #[test]
+    fn resumed_session_keeps_the_visible_prefix_until_it_catches_up() {
+        assert!(!should_apply_resumed_snapshot(Some(10_000), 50, false));
+        assert!(!should_apply_resumed_snapshot(Some(10_000), 6_400, false));
+        assert!(should_apply_resumed_snapshot(Some(10_000), 12_800, false));
+        assert!(should_apply_resumed_snapshot(Some(10_000), 8_000, true));
+        assert!(should_apply_resumed_snapshot(None, 50, false));
+    }
 }

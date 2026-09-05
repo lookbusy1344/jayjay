@@ -98,6 +98,9 @@ pub struct LoadingState {
     /// True once the active session's first snapshot has been applied; guards selection-restoration
     /// logic so a later snapshot in the same session only appends rows instead of re-selecting.
     graph_first_snapshot_applied: bool,
+    /// A restarted Continue Loading session does not replace the visible graph until its cumulative
+    /// prefix has caught up to the rows that were already published.
+    graph_resume_floor: Option<usize>,
     /// True while a session has paused at the row ceiling with more history available; drives the
     /// Continue Loading affordance.
     pub graph_paused: bool,

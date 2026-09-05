@@ -184,6 +184,29 @@ fn a_revset_smaller_than_the_initial_batch_publishes_once_and_finishes() {
 }
 
 #[test]
+fn cancellation_from_the_final_snapshot_reports_canceled_not_finished() {
+    let (_temp_dir, repo_path) = build_linear_repo(3);
+    let repo = Repo::open(&repo_path).expect("open repo");
+    let token = GraphLoadToken::new();
+    let cancel_token = token.clone();
+    let mut events = Vec::new();
+
+    repo.start_log_graph(request("all()", 50, 500), token, |event| {
+        if matches!(&event, LogGraphEvent::Snapshot(snapshot) if snapshot.is_complete) {
+            cancel_token.cancel();
+        }
+        events.push(event);
+    });
+
+    assert!(matches!(events.last(), Some(LogGraphEvent::Canceled)));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, LogGraphEvent::Finished))
+    );
+}
+
+#[test]
 fn an_invalid_revset_reports_failure_not_partial_success() {
     let (_temp_dir, repo_path) = build_linear_repo(3);
     let repo = Repo::open(&repo_path).expect("open repo");

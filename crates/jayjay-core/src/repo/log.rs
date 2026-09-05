@@ -14,8 +14,8 @@ use jj_lib::revset::{self, SymbolResolver, UserRevsetExpression};
 
 use super::Repo;
 use super::graph_load::{
-    GraphLoadToken, LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot,
-    RequestGuard, SystemClock,
+    BACKGROUND_LOG_BATCH_ROWS, GraphLoadToken, LogGraphEvent, LogGraphProgress, LogGraphRequest,
+    LogGraphSnapshot, RequestGuard, SystemClock,
 };
 use super::resolve::{ChangeInfoContext, CommitRefIndex};
 use super::support::{block_on, on_worker_stack};
@@ -340,15 +340,26 @@ impl Repo {
             let available_to_publish =
                 (raw_rows.len() as u32).saturating_sub(MAX_CONTINUOUS_CONNECTOR_ROWS as u32);
             let publish_target = next_threshold.min(request.row_ceiling);
-            if available_to_publish >= publish_target {
-                self.publish_log_graph_prefix(
+            let budget_target = raw_rows.len() as u32;
+            let budget_requires_publish =
+                guard.should_publish_first_result(published_rows, budget_target);
+            if available_to_publish >= publish_target || budget_requires_publish {
+                let publish_target = if budget_requires_publish {
+                    budget_target.min(request.row_ceiling)
+                } else {
+                    publish_target
+                };
+                if !self.publish_log_graph_prefix(
                     &repo,
                     &raw_rows,
                     publish_target,
                     false,
                     guard,
                     on_event,
-                )?;
+                )? {
+                    on_event(LogGraphEvent::Canceled);
+                    return Ok(());
+                }
                 published_rows = publish_target;
                 // The ceiling is reached while the stream still has rows; pause for Continue Loading
                 // instead of retaining an unbounded revset in memory.
@@ -360,7 +371,7 @@ impl Repo {
                     }
                     return Ok(());
                 }
-                next_threshold = next_threshold.saturating_mul(2);
+                next_threshold = next_threshold.max(published_rows).saturating_mul(2);
             }
         }
 
@@ -371,7 +382,17 @@ impl Repo {
 
         let total_rows = raw_rows.len() as u32;
         if total_rows > published_rows || published_rows == 0 {
-            self.publish_log_graph_prefix(&repo, &raw_rows, total_rows, true, guard, on_event)?;
+            if !self
+                .publish_log_graph_prefix(&repo, &raw_rows, total_rows, true, guard, on_event)?
+            {
+                on_event(LogGraphEvent::Canceled);
+                return Ok(());
+            }
+        }
+
+        if guard.is_canceled() {
+            on_event(LogGraphEvent::Canceled);
+            return Ok(());
         }
 
         on_event(LogGraphEvent::Finished);
@@ -389,9 +410,9 @@ impl Repo {
         is_final: bool,
         guard: &RequestGuard<'_>,
         on_event: &mut impl FnMut(LogGraphEvent),
-    ) -> CoreResult<()> {
+    ) -> CoreResult<bool> {
         if guard.is_canceled() {
-            return Ok(());
+            return Ok(false);
         }
         let window_len = if is_final {
             raw_rows.len()
@@ -399,11 +420,18 @@ impl Repo {
             (threshold as usize + MAX_CONTINUOUS_CONNECTOR_ROWS).min(raw_rows.len())
         };
         let window = &raw_rows[..window_len];
-        let entries_with_lookahead = self.materialize_graph_entries(repo, window)?;
+        let Some(entries_with_lookahead) =
+            self.materialize_graph_entries_guarded(repo, window, Some(guard))?
+        else {
+            return Ok(false);
+        };
         if guard.is_canceled() {
-            return Ok(());
+            return Ok(false);
         }
         let layout = DagLayout::compute(&entries_with_lookahead);
+        if guard.is_canceled() {
+            return Ok(false);
+        }
         let publish_len = (threshold as usize).min(entries_with_lookahead.len());
         let entries = entries_with_lookahead[..publish_len].to_vec();
         let rows = layout.rows[..publish_len].to_vec();
@@ -416,7 +444,7 @@ impl Repo {
             loaded_rows: publish_len as u32,
             is_complete: is_final,
         }));
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn materialize_graph_entries(
@@ -424,6 +452,16 @@ impl Repo {
         repo: &Arc<ReadonlyRepo>,
         rows: &[GraphRowData],
     ) -> CoreResult<Vec<GraphEntry>> {
+        self.materialize_graph_entries_guarded(repo, rows, None)
+            .map(|entries| entries.expect("an unguarded materialization cannot be canceled"))
+    }
+
+    fn materialize_graph_entries_guarded(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
+        guard: Option<&RequestGuard<'_>>,
+    ) -> CoreResult<Option<Vec<GraphEntry>>> {
         on_worker_stack(|| {
             let metadata_started = Instant::now();
             let metadata_span = tracing::debug_span!("log_graph.metadata", rows = rows.len());
@@ -438,6 +476,9 @@ impl Repo {
                 elapsed_us = immutability_started.elapsed().as_micros() as u64,
                 "immutability timing"
             );
+            if guard.is_some_and(RequestGuard::is_canceled) {
+                return Ok(None);
+            }
             let displayed_commit_ids = rows
                 .iter()
                 .map(|(commit, _)| commit.id().hex())
@@ -445,8 +486,11 @@ impl Repo {
             let divergent_change_ids = {
                 let span = tracing::debug_span!("log_graph.divergence");
                 let _entered = span.enter();
-                Self::repository_divergent_change_ids(repo, rows.iter().map(|(commit, _)| commit))?
+                self.repository_divergent_change_ids(repo, rows.iter().map(|(commit, _)| commit))?
             };
+            if guard.is_some_and(RequestGuard::is_canceled) {
+                return Ok(None);
+            }
             let ref_index_started = Instant::now();
             let ref_index = {
                 let span = tracing::debug_span!("log_graph.ref_index");
@@ -457,6 +501,9 @@ impl Repo {
                 elapsed_us = ref_index_started.elapsed().as_micros() as u64,
                 "ref index timing"
             );
+            if guard.is_some_and(RequestGuard::is_canceled) {
+                return Ok(None);
+            }
             let empty_checks_started = Instant::now();
             let (empty_states, empty_check_count) = {
                 let span = tracing::debug_span!("log_graph.empty_checks");
@@ -488,9 +535,14 @@ impl Repo {
                     }
                 }
                 let empty_check_count = to_compute.len();
-                for (ix, id, is_empty) in compute_empty_states(repo, &to_compute) {
-                    states[ix] = is_empty;
-                    newly.push((id, is_empty));
+                for batch in to_compute.chunks(BACKGROUND_LOG_BATCH_ROWS as usize) {
+                    if guard.is_some_and(RequestGuard::is_canceled) {
+                        return Ok(None);
+                    }
+                    for (ix, id, is_empty) in compute_empty_states(repo, batch) {
+                        states[ix] = is_empty;
+                        newly.push((id, is_empty));
+                    }
                 }
                 bounded_extend(
                     &mut self.empty_commit_cache.write().unwrap(),
@@ -507,22 +559,29 @@ impl Repo {
             let entries: Vec<GraphEntry> = {
                 let span = tracing::debug_span!("log_graph.commit_materialization");
                 let _entered = span.enter();
-                rows.iter()
-                    .zip(empty_states)
-                    .map(|((commit, edges), is_empty)| GraphEntry {
-                        change: self.commit_to_change_info(
-                            repo,
-                            commit,
-                            ChangeInfoContext {
-                                immutable_ids: Some(&immutable_ids),
-                                ref_index: Some(&ref_index),
-                                divergent_change_ids: Some(&divergent_change_ids),
-                                is_empty: Some(is_empty),
-                            },
-                        ),
-                        edges: edges.clone(),
-                    })
-                    .collect()
+                let mut entries = Vec::with_capacity(rows.len());
+                for start in (0..rows.len()).step_by(BACKGROUND_LOG_BATCH_ROWS as usize) {
+                    if guard.is_some_and(RequestGuard::is_canceled) {
+                        return Ok(None);
+                    }
+                    let end = (start + BACKGROUND_LOG_BATCH_ROWS as usize).min(rows.len());
+                    entries.extend(rows[start..end].iter().zip(&empty_states[start..end]).map(
+                        |((commit, edges), &is_empty)| GraphEntry {
+                            change: self.commit_to_change_info(
+                                repo,
+                                commit,
+                                ChangeInfoContext {
+                                    immutable_ids: Some(&immutable_ids),
+                                    ref_index: Some(&ref_index),
+                                    divergent_change_ids: Some(&divergent_change_ids),
+                                    is_empty: Some(is_empty),
+                                },
+                            ),
+                            edges: edges.clone(),
+                        },
+                    ));
+                }
+                entries
             };
             tracing::debug!(
                 elapsed_us = materialization_started.elapsed().as_micros() as u64,
@@ -541,7 +600,7 @@ impl Repo {
                 "log graph work counters"
             );
 
-            Ok(entries)
+            Ok(Some(entries))
         })
     }
 
@@ -673,26 +732,35 @@ impl Repo {
     }
 
     fn repository_divergent_change_ids<'a>(
+        &self,
         repo: &Arc<ReadonlyRepo>,
         commits: impl Iterator<Item = &'a jj_lib::commit::Commit>,
     ) -> CoreResult<HashSet<String>> {
-        commits
-            .map(|commit| commit.change_id().clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter_map(
-                |change_id| match block_on(repo.resolve_change_id(&change_id)) {
-                    Ok(Some(targets)) if targets.is_divergent() => {
-                        Some(Ok(encode_reverse_hex(change_id.as_bytes())))
-                    }
-                    Ok(_) => None,
-                    Err(error) => Some(Err(error)),
-                },
-            )
-            .collect::<Result<_, _>>()
-            .map_err(|error| CoreError::Internal {
-                message: format!("resolve change id: {error}"),
-            })
+        let displayed_commit_ids = commits
+            .map(|commit| commit.id().clone())
+            .collect::<Vec<_>>();
+        if displayed_commit_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let divergent = self.parse_revset_str(repo, "divergent()")?;
+        let displayed = UserRevsetExpression::commits(displayed_commit_ids);
+        let revset = self.evaluate_typed_revset(repo, divergent.intersection(&displayed))?;
+        let mut stream = revset.stream();
+        let mut change_ids = HashSet::new();
+        while let Some(result) = block_on(stream.next()) {
+            let commit_id = result.map_err(|error| CoreError::Internal {
+                message: format!("divergent revset stream: {error}"),
+            })?;
+            let commit =
+                repo.store()
+                    .get_commit(&commit_id)
+                    .map_err(|error| CoreError::Internal {
+                        message: format!("get divergent commit: {error}"),
+                    })?;
+            change_ids.insert(encode_reverse_hex(commit.change_id().as_bytes()));
+        }
+        Ok(change_ids)
     }
 
     /// Mark changes with duplicate change IDs as divergent.

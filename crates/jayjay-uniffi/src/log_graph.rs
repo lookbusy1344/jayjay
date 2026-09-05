@@ -61,12 +61,17 @@ impl From<core::LogGraphRequest> for LogGraphRequest {
 
 impl From<LogGraphRequest> for core::LogGraphRequest {
     fn from(request: LogGraphRequest) -> Self {
+        let row_ceiling = if request.row_ceiling == 0 {
+            core::MAX_AUTO_LOADED_ROWS
+        } else {
+            request.row_ceiling
+        };
         Self {
             revset: request.revset,
             initial_rows: request.initial_rows,
             background_batch_rows: request.background_batch_rows,
             first_result_budget: Duration::from_millis(request.first_result_budget_ms),
-            row_ceiling: request.row_ceiling,
+            row_ceiling,
         }
     }
 }
@@ -165,7 +170,7 @@ mod tests {
             Duration::from_millis(2500)
         );
         assert_eq!(core_request.initial_rows, 10);
-        assert_eq!(core_request.row_ceiling, 0);
+        assert_eq!(core_request.row_ceiling, core::MAX_AUTO_LOADED_ROWS);
     }
 
     #[test]

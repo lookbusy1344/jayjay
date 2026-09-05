@@ -69,6 +69,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     @ObservationIgnored var graphLoadGeneration: UInt64?
     @ObservationIgnored var graphRefreshGeneration: UInt64 = 0
     @ObservationIgnored var graphFirstSnapshotApplied = false
+    @ObservationIgnored var graphResumeFloor: Int?
     @ObservationIgnored var graphPendingSelectedChange: ChangeDetail?
     var graphPaused = false
     var graphLoadCanceling = false
