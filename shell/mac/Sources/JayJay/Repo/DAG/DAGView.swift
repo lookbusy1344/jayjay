@@ -279,19 +279,11 @@ struct DAGView: View {
     }
 
     private func moveSelection(by delta: Int) {
-        let viewModel = DAGViewModel(
-            entries: entries,
+        guard let changeId = DAGViewModel.selectedChangeId(
+            in: entries,
             selectedId: selectedId,
-            selectedIds: selectedIds,
-            compareFromId: compareFromId,
-            contextTargetId: contextTargetId,
-            rebaseDrag: rebaseDrag,
-            bookmarkDrag: bookmarkDrag,
-            colorScheme: colorScheme,
-            layout: layout,
-            geometry: DAGGeometry(logicalColumnCount: layout.logicalColumnCount, availableSidebarWidth: sidebarWidth)
-        )
-        guard let changeId = viewModel.selectedChangeId(afterMovingBy: delta) else { return }
+            afterMovingBy: delta
+        ) else { return }
         actions?.select(changeId: changeId, coalescing: true)
         keyboardReveal = DAGRevealRequest(changeId: changeId)
     }

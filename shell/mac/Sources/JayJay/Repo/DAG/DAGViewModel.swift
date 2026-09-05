@@ -16,6 +16,100 @@ struct DAGViewModel {
     let layout: DAGLayout
     let geometry: DAGGeometry
 
+    // Derived state built once per view model, not per row. macOS SwiftUI evaluates each row's
+    // `.contextMenu` content eagerly on every body update, so any O(entries) work these lookups back
+    // would otherwise run per visible row — quadratic on a large graph.
+    private let changeByRevision: [String: ChangeInfo]
+    private let parentIdsByCommitId: [String: [String]]
+    private let selectedChanges: [ChangeInfo]
+    private let selectedCommitIds: Set<String>
+    /// Commit ids strictly above/below the selection. A row can merge with a single selected change
+    /// only when it is independent of it — in neither set — so per-row merge eligibility is an O(1)
+    /// lookup rather than an ancestor walk.
+    private let selectionAncestors: Set<String>
+    private let selectionDescendants: Set<String>
+
+    init(
+        entries: [GraphEntry],
+        selectedId: String?,
+        selectedIds: [String],
+        compareFromId: String?,
+        contextTargetId: String?,
+        rebaseDrag: DAGRebaseDragState?,
+        bookmarkDrag: BookmarkDragState?,
+        colorScheme: ColorScheme,
+        layout: DAGLayout,
+        geometry: DAGGeometry
+    ) {
+        self.entries = entries
+        self.selectedId = selectedId
+        self.selectedIds = selectedIds
+        self.compareFromId = compareFromId
+        self.contextTargetId = contextTargetId
+        self.rebaseDrag = rebaseDrag
+        self.bookmarkDrag = bookmarkDrag
+        self.colorScheme = colorScheme
+        self.layout = layout
+        self.geometry = geometry
+
+        // `matchesRevision` matches either id, so `change(for:)` becomes an O(1) lookup keyed by both,
+        // keeping the first entry for a key to mirror the previous `first(where:)` scan.
+        var lookup: [String: ChangeInfo] = [:]
+        lookup.reserveCapacity(entries.count * 2)
+        for entry in entries {
+            let change = entry.change
+            if lookup[change.commitId.id] == nil {
+                lookup[change.commitId.id] = change
+            }
+            if lookup[change.changeId.id] == nil {
+                lookup[change.changeId.id] = change
+            }
+        }
+        changeByRevision = lookup
+
+        parentIdsByCommitId = Dictionary(
+            uniqueKeysWithValues: entries.map { entry in
+                (
+                    entry.change.commitId.id,
+                    entry.edges.filter { $0.edgeType != .missing }.map(\.target)
+                )
+            }
+        )
+
+        let selectedIdSet = Set(selectedIds)
+        let selected = entries.map(\.change).filter { change in
+            let revision = change.selectionRevision
+            return selectedIdSet.contains(revision) || (selectedIds.isEmpty && selectedId == revision)
+        }
+        selectedChanges = selected
+        let selectedCommits = Set(selected.map(\.commitId.id))
+        selectedCommitIds = selectedCommits
+
+        var childIdsByCommitId: [String: [String]] = [:]
+        for (commitId, parentIds) in parentIdsByCommitId {
+            for parentId in parentIds {
+                childIdsByCommitId[parentId, default: []].append(commitId)
+            }
+        }
+        selectionAncestors = Self.reachable(from: selectedCommits, via: parentIdsByCommitId)
+        selectionDescendants = Self.reachable(from: selectedCommits, via: childIdsByCommitId)
+    }
+
+    /// Commit ids reachable from `starts` by following `edges`, excluding the starts themselves.
+    private static func reachable(
+        from starts: Set<String>,
+        via edges: [String: [String]]
+    ) -> Set<String> {
+        var reached: Set<String> = []
+        var pending = Array(starts.flatMap { edges[$0] ?? [] })
+        while let next = pending.popLast() {
+            if reached.insert(next).inserted {
+                pending.append(contentsOf: edges[next] ?? [])
+            }
+        }
+        return reached
+    }
+
     var isEmpty: Bool {
         entries.isEmpty
     }
@@ -65,7 +159,15 @@ struct DAGViewModel {
     }
 
     func canMergeSelectedChange(with target: ChangeInfo) -> Bool {
-        canMerge(selectedChanges + [target])
+        // Single selection is the per-row hot path: a row can merge with the selected change when the
+        // two are independent, i.e. the row is neither an ancestor nor a descendant of it.
+        if let selected = selectedChanges.first, selectedChanges.count == 1 {
+            let targetId = target.commitId.id
+            return targetId != selected.commitId.id
+                && !selectionAncestors.contains(targetId)
+                && !selectionDescendants.contains(targetId)
+        }
+        return canMerge(selectedChanges + [target])
     }
 
     private func canMerge(_ changes: [ChangeInfo]) -> Bool {
@@ -92,29 +194,10 @@ struct DAGViewModel {
         changes.last?.parents.count == 1
     }
 
-    private var selectedChanges: [ChangeInfo] {
-        entries.map(\.change).filter(isSelected)
-    }
-
-    private var selectedCommitIds: Set<String> {
-        Set(selectedChanges.map(\.commitId.id))
-    }
-
     private var hasMutableSelection: Bool {
         selectedChanges.count == selectedIds.count
             && selectedChanges.count > 1
             && selectedChanges.allSatisfy { !$0.isImmutable }
-    }
-
-    private var parentIdsByCommitId: [String: [String]] {
-        Dictionary(
-            uniqueKeysWithValues: entries.map { entry in
-                (
-                    entry.change.commitId.id,
-                    entry.edges.filter { $0.edgeType != .missing }.map(\.target)
-                )
-            }
-        )
     }
 
     private func hasSelectedAncestor(
@@ -173,6 +256,12 @@ struct DAGViewModel {
     }
 
     func selectedChangeId(afterMovingBy delta: Int) -> String? {
+        Self.selectedChangeId(in: entries, selectedId: selectedId, afterMovingBy: delta)
+    }
+
+    /// Static so keyboard navigation resolves the next selection without building a whole view model
+    /// (and its per-view-model precompute) on every arrow press.
+    static func selectedChangeId(in entries: [GraphEntry], selectedId: String?, afterMovingBy delta: Int) -> String? {
         guard !entries.isEmpty else { return nil }
         let currentIdx: Int = if let selectedId,
                                  let idx = entries.firstIndex(where: { $0.change.selectionRevision == selectedId })
@@ -196,7 +285,7 @@ struct DAGViewModel {
     }
 
     func change(for changeId: String) -> ChangeInfo? {
-        entries.first(where: { $0.change.matchesRevision(changeId) })?.change
+        changeByRevision[changeId]
     }
 
     func canSquashIntoParent(_ target: ChangeInfo) -> Bool {
@@ -205,8 +294,8 @@ struct DAGViewModel {
     }
 
     func bookmarkDiffRequest(from selectedId: String, to target: ChangeInfo) -> BookmarkDiffRequest? {
-        guard let selectedEntry = entries.first(where: { $0.change.matchesRevision(selectedId) }),
-              let base = RevsetExpressions.primaryBaseBookmarkEndpoint(for: selectedEntry.change),
+        guard let selectedChange = changeByRevision[selectedId],
+              let base = RevsetExpressions.primaryBaseBookmarkEndpoint(for: selectedChange),
               let head = RevsetExpressions.primaryHeadBookmarkEndpoint(for: target),
               base.label != head.label
         else {
@@ -216,7 +305,7 @@ struct DAGViewModel {
     }
 
     func scrollId(for rev: String) -> String {
-        entries.first(where: { $0.change.matchesRevision(rev) })?.change.selectionRevision ?? rev
+        changeByRevision[rev]?.selectionRevision ?? rev
     }
 
     /// Other visible commits that share this change's id — the siblings of a divergent change. Empty unless `change` is divergent. Used to offer an interdiff between two versions of the same change so the user can see which is safer to abandon.

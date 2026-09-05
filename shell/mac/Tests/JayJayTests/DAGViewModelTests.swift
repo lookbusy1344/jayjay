@@ -127,6 +127,22 @@ final class DAGViewModelTests: XCTestCase {
         XCTAssertTrue(single.canMergeSelectedChange(with: right.change))
     }
 
+    func testSingleSelectionMergeEligibilityFollowsReachability() {
+        // base <- left <- child ; base <- right. Selecting `left`, only the independent `right` merges.
+        let base = makeEntry(changeId: "base", commitId: "base-commit", isDivergent: false)
+        let left = makeEntry(changeId: "left", commitId: "left-commit", parents: ["base-commit"], isDivergent: false)
+        let right = makeEntry(changeId: "right", commitId: "right-commit", parents: ["base-commit"], isDivergent: false)
+        let child = makeEntry(changeId: "child", commitId: "child-commit", parents: ["left-commit"], isDivergent: false)
+        let viewModel = makeViewModel(
+            entries: [child, left, right, base], selectedId: "left", selectedIds: ["left"], contextTargetId: nil
+        )
+
+        XCTAssertFalse(viewModel.canMergeSelectedChange(with: child.change)) // descendant
+        XCTAssertFalse(viewModel.canMergeSelectedChange(with: base.change)) // ancestor
+        XCTAssertFalse(viewModel.canMergeSelectedChange(with: left.change)) // itself
+        XCTAssertTrue(viewModel.canMergeSelectedChange(with: right.change)) // independent
+    }
+
     func testClearsHoveredContextTarget() {
         let entry = makeEntry(changeId: "hovered", commitId: "hovered-commit", isDivergent: false)
         let viewModel = makeViewModel(entries: [entry], selectedId: "selected", contextTargetId: "hovered")
