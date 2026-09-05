@@ -47,6 +47,45 @@ fn bounded_extend(
     cache.extend(computed);
 }
 
+/// Computes `is_empty` for each `(index, commit)`, returning `(index, commit id, is_empty)` for those
+/// that resolve. Emptiness of a merge commit needs a tree merge; those checks are independent and
+/// CPU-bound and dominate a large `all()`, so the batch is split across the available cores. A commit
+/// whose check errors is dropped (the caller defaults it to non-empty).
+fn compute_empty_states(
+    repo: &Arc<ReadonlyRepo>,
+    to_compute: &[(usize, &jj_lib::commit::Commit)],
+) -> Vec<(usize, CommitId, bool)> {
+    if to_compute.is_empty() {
+        return Vec::new();
+    }
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(to_compute.len());
+    let chunk_size = to_compute.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = to_compute
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|(ix, commit)| {
+                            block_on(commit.is_empty(repo.as_ref()))
+                                .ok()
+                                .map(|is_empty| (*ix, commit.id().clone(), is_empty))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("empty-state worker panicked"))
+            .collect()
+    })
+}
+
 /// Collapse jj-lib's per-boundary `Missing` edges into a single one, matching `jj log`.
 ///
 /// For a revset whose selected commits are disconnected from their parents, jj-lib
@@ -420,31 +459,36 @@ impl Repo {
                     .iter()
                     .map(|(commit, _)| (commit.id().clone(), commit.tree_ids()))
                     .collect::<HashMap<_, _>>();
-                let cache = self.empty_commit_cache.read().unwrap();
-                let mut computed = Vec::new();
-                let states = rows
-                    .iter()
-                    .map(|(commit, _)| {
-                        cache.get(commit.id()).copied().unwrap_or_else(|| {
-                            let result = match commit.parent_ids() {
-                                [parent_id] => displayed_tree_ids
-                                    .get(parent_id)
-                                    .map(|tree_ids| commit.tree_ids() == *tree_ids)
-                                    .or_else(|| block_on(commit.is_empty(repo.as_ref())).ok()),
-                                _ => block_on(commit.is_empty(repo.as_ref())).ok(),
-                            };
-                            if let Some(is_empty) = result {
-                                computed.push((commit.id().clone(), is_empty));
-                            }
-                            result.unwrap_or(false)
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                drop(cache);
-                let empty_check_count = computed.len();
+                // Resolve what's cheap (cached, or a single displayed parent to compare trees
+                // against) sequentially; defer the rest — chiefly merge commits, whose emptiness
+                // needs a tree merge — to a parallel pass, since those dominate a large `all()`.
+                let mut states = vec![false; rows.len()];
+                let mut newly = Vec::new();
+                let mut to_compute: Vec<(usize, &jj_lib::commit::Commit)> = Vec::new();
+                {
+                    let cache = self.empty_commit_cache.read().unwrap();
+                    for (ix, (commit, _)) in rows.iter().enumerate() {
+                        if let Some(&cached) = cache.get(commit.id()) {
+                            states[ix] = cached;
+                        } else if let [parent_id] = commit.parent_ids()
+                            && let Some(parent_tree_ids) = displayed_tree_ids.get(parent_id)
+                        {
+                            let is_empty = commit.tree_ids() == *parent_tree_ids;
+                            states[ix] = is_empty;
+                            newly.push((commit.id().clone(), is_empty));
+                        } else {
+                            to_compute.push((ix, commit));
+                        }
+                    }
+                }
+                let empty_check_count = to_compute.len();
+                for (ix, id, is_empty) in compute_empty_states(repo, &to_compute) {
+                    states[ix] = is_empty;
+                    newly.push((id, is_empty));
+                }
                 bounded_extend(
                     &mut self.empty_commit_cache.write().unwrap(),
-                    computed,
+                    newly,
                     EMPTY_COMMIT_CACHE_MAX_ENTRIES,
                 );
                 (states, empty_check_count)

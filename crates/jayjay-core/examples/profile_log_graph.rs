@@ -24,8 +24,9 @@ struct Stage {
     total: Duration,
 }
 
-/// Sums span busy time by span name. Loading runs on one worker thread, so a span's enter-to-exit
-/// span is its busy time; stages that publish repeatedly (e.g. metadata per prefix) accumulate.
+/// Sums span busy time by span name across every thread that enters the span. A sequential stage
+/// reads as wall time; a parallelized stage (e.g. empty-state checks) sums across worker threads, so
+/// its total can exceed wall time. Stages that publish repeatedly also accumulate across prefixes.
 #[derive(Clone, Default)]
 struct StageTimings(Arc<Mutex<HashMap<&'static str, Stage>>>);
 
