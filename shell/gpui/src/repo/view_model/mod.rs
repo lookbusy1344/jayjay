@@ -19,7 +19,7 @@ use jayjay_core::dag::DagLayout;
 use jayjay_core::diff::FileDiff;
 use jayjay_core::{
     AnnotationLine, BookmarkInfo, ChangeInfo, DEFAULT_REVSET_DEPTH, DiffHunk, DiffProjection,
-    DiffStats, GraphEntry, PrInfo, Repo, WorkspaceInfo, build_default_revset,
+    DiffStats, GraphEntry, GraphLoadToken, PrInfo, Repo, WorkspaceInfo, build_default_revset,
 };
 use jayjay_markdown::MarkdownDocument;
 use jayjay_review::ReviewNoteStatus;
@@ -41,7 +41,7 @@ struct OpenedRepo {
 pub struct GraphData {
     pub changes: Arc<Vec<ChangeInfo>>,
     pub entries: Arc<Vec<GraphEntry>>,
-    pub(crate) dag_layout: Arc<DagLayout>,
+    pub dag_layout: Arc<DagLayout>,
     pub(crate) bookmarks: Arc<Vec<BookmarkInfo>>,
     pub workspaces: Arc<Vec<WorkspaceInfo>>,
 }
@@ -87,6 +87,14 @@ pub struct LoadingState {
     pub pending_auto_refresh: bool,
     refresh_indicator_gen: u64,
     refresh_minimum_elapsed: bool,
+    /// Set while a `start_log_graph` session is running for the current `refresh_gen`; the toolbar
+    /// refresh button becomes a cancel action for it. Cleared once the session's terminal event lands.
+    pub(crate) graph_session: Option<GraphLoadToken>,
+    /// True once `graph_session`'s token has been latched but its terminal event has not arrived yet.
+    pub graph_session_canceling: bool,
+    /// True once the active session's first snapshot has been applied; guards selection-restoration
+    /// logic so a later snapshot in the same session only appends rows instead of re-selecting.
+    graph_first_snapshot_applied: bool,
 }
 
 pub struct RepoViewModel {

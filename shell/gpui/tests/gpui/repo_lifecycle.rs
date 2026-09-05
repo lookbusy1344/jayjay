@@ -285,6 +285,54 @@ fn fs_event_mid_refresh_is_not_dropped(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn fs_event_mid_graph_session_cancels_the_stale_stream_then_reruns(cx: &mut TestAppContext) {
+    let fixture = LinearFixture::build();
+    let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
+    vm.update(cx, |vm, cx| vm.boot(cx));
+    settle(cx);
+
+    vm.update(cx, |vm, cx| {
+        // Start a graph session, then fire an FS event before it can stream to completion.
+        vm.refresh(false, cx);
+        assert!(vm.loading.refreshing, "refresh should start a session");
+        assert!(
+            !vm.loading.graph_session_canceling,
+            "a fresh session is not canceling"
+        );
+        vm.handle_fs_event(cx);
+        assert!(
+            vm.loading.graph_session_canceling,
+            "an FS event mid-session must latch cancellation of the stale stream"
+        );
+        assert!(
+            vm.loading.pending_auto_refresh,
+            "and record the owed replacement refresh"
+        );
+    });
+    settle(cx);
+
+    vm.read_with(cx, |vm, _| {
+        assert!(
+            !vm.loading.refreshing,
+            "the replacement refresh should finish"
+        );
+        assert!(
+            !vm.loading.pending_auto_refresh,
+            "the owed refresh must be consumed"
+        );
+        assert!(
+            !vm.loading.graph_session_canceling,
+            "cancellation state clears once the terminal event lands"
+        );
+        assert!(vm.error.is_none(), "rerun errored: {:?}", vm.error);
+        assert!(
+            !vm.graph.changes.is_empty(),
+            "the replacement session should repopulate the graph"
+        );
+    });
+}
+
+#[gpui::test]
 fn selecting_a_change_resets_pr_state(cx: &mut TestAppContext) {
     let fixture = LinearFixture::build();
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));

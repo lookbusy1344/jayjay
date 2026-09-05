@@ -2,6 +2,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt as _;
+use futures::channel::mpsc::UnboundedSender;
 use gpui::{AppContext, Context, Task};
 use jayjay_core::{CoreResult, Error, Repo};
 
@@ -18,6 +20,33 @@ impl RepoViewModel {
         cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(future).await;
             let _ = this.update(cx, move |vm, cx| update(vm, result, cx));
+        })
+        .detach();
+    }
+
+    /// Runs `produce` on a background thread, streaming each item it sends back to `on_item` on the
+    /// main thread as it arrives, in send order. `produce` owns pacing and termination: once it
+    /// returns (or its sender is dropped), the stream ends and `on_item` stops being called.
+    ///
+    /// Unlike `background_update`, this supports incremental progress instead of one result at the
+    /// end. The background thread keeps running to completion even if this view model is dropped or
+    /// superseded; `produce` must carry its own cancellation (e.g. a `GraphLoadToken`) if it should
+    /// stop early.
+    pub(in crate::repo) fn background_stream<T>(
+        cx: &mut Context<Self>,
+        produce: impl FnOnce(UnboundedSender<T>) + Send + 'static,
+        mut on_item: impl FnMut(&mut Self, T, &mut Context<Self>) + 'static,
+    ) where
+        T: Send + 'static,
+    {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        cx.background_spawn(async move { produce(tx) }).detach();
+        cx.spawn(async move |this, cx| {
+            while let Some(item) = rx.next().await {
+                if this.update(cx, |vm, cx| on_item(vm, item, cx)).is_err() {
+                    break;
+                }
+            }
         })
         .detach();
     }

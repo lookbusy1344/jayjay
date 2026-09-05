@@ -29,7 +29,14 @@ impl Render for RepoWindow {
         let t = theme(cx).clone();
         let (sidebar_width, file_column_width) =
             self.layout.fitted(f32::from(window.viewport_size().width));
-        let (toolbar_repo, bookmark_counts, bookmarks, workspaces, is_refreshing) = {
+        let (
+            toolbar_repo,
+            bookmark_counts,
+            bookmarks,
+            workspaces,
+            is_refreshing,
+            is_canceling_refresh,
+        ) = {
             let vm = self.vm.read(cx);
             let bookmarks = vm.graph.bookmarks.clone();
             let local_bookmarks = bookmarks
@@ -58,6 +65,7 @@ impl Render for RepoWindow {
                 bookmarks,
                 workspaces,
                 vm.loading.refresh_indicator,
+                vm.loading.graph_session_canceling,
             )
         };
         let is_fetching = self.sync_activity.fetching;
@@ -165,6 +173,7 @@ impl Render for RepoWindow {
                 self.revset_filter_visible(),
                 ToolbarActivity {
                     is_refreshing,
+                    is_canceling_refresh,
                     is_fetching,
                     is_pushing,
                 },
