@@ -11,6 +11,7 @@ mod environment;
 mod evolog;
 mod file_editor;
 mod git;
+mod graph_load;
 mod hosted_repo;
 mod init;
 mod log;
@@ -48,6 +49,10 @@ pub use environment::is_executable_file;
 pub use environment::jj_binary;
 pub use environment::login_shell;
 pub use environment::login_shell_path;
+pub use graph_load::{
+    BACKGROUND_LOG_BATCH_ROWS, FIRST_RESULT_BUDGET, GraphLoadToken, INITIAL_LOG_BATCH_ROWS,
+    LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot,
+};
 pub use init::init_jj_git_repo;
 pub use review_note_output::{
     ReviewNoteOutputFormat, add_review_note, resolve_review_note, review_notes_output,

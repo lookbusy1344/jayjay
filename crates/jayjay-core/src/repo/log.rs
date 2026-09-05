@@ -13,8 +13,13 @@ use jj_lib::repo::Repo as _;
 use jj_lib::revset::{self, SymbolResolver, UserRevsetExpression};
 
 use super::Repo;
+use super::graph_load::{
+    GraphLoadToken, LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot,
+    RequestGuard, SystemClock,
+};
 use super::resolve::{ChangeInfoContext, CommitRefIndex};
 use super::support::{block_on, on_worker_stack};
+use crate::dag::{DagLayout, MAX_CONTINUOUS_CONNECTOR_ROWS};
 use crate::types::*;
 
 pub(crate) struct ImmutableIds {
@@ -22,7 +27,25 @@ pub(crate) struct ImmutableIds {
     pub(crate) parents: HashSet<String>,
 }
 
-type GraphRowData = (jj_lib::commit::Commit, Vec<GraphEdge>);
+pub(crate) type GraphRowData = (jj_lib::commit::Commit, Vec<GraphEdge>);
+
+/// Ceiling on retained empty-commit results. Repeated rewrites mint fresh commit ids, so the cache
+/// would otherwise grow without bound across a long session.
+const EMPTY_COMMIT_CACHE_MAX_ENTRIES: usize = 100_000;
+
+/// Insert `computed` into `cache`, clearing it wholesale if it would exceed `max_entries`.
+/// Emptiness is keyed by content-addressed commit id and never changes, so eviction only forces
+/// later recomputation; wholesale clearing bounds growth without tracking per-entry recency.
+fn bounded_extend(
+    cache: &mut HashMap<CommitId, bool>,
+    computed: Vec<(CommitId, bool)>,
+    max_entries: usize,
+) {
+    if cache.len() + computed.len() > max_entries {
+        cache.clear();
+    }
+    cache.extend(computed);
+}
 
 /// Collapse jj-lib's per-boundary `Missing` edges into a single one, matching `jj log`.
 ///
@@ -112,15 +135,18 @@ impl Repo {
         })
     }
 
+    /// Fully materializes `revset_str`. UI code must not call this directly on a large revset;
+    /// use `start_log_graph` for a progressive session instead. Kept for tests and non-UI callers
+    /// that genuinely need the complete result.
     pub fn log_graph(&self, revset_str: &str) -> CoreResult<Vec<GraphEntry>> {
         let repo = self.get_repo();
         let expression = self.parse_revset_str(&repo, revset_str)?;
         let rows = self.collect_graph_rows(&repo, &expression)?;
-        self.materialize_graph_entries(&repo, rows)
+        self.materialize_graph_entries(&repo, &rows)
     }
 
     /// Streams `expression` through the same prioritized `TopoGroupedGraph` order `jj log` uses.
-    fn collect_graph_rows(
+    pub(crate) fn collect_graph_rows(
         &self,
         repo: &Arc<ReadonlyRepo>,
         expression: &Arc<UserRevsetExpression>,
@@ -177,10 +203,164 @@ impl Repo {
         })
     }
 
-    fn materialize_graph_entries(
+    /// Runs a progressive graph-load session for `request`, invoking `on_event` once per published
+    /// snapshot and exactly once with a terminal event (`Finished`, `Canceled`, or `Failed`).
+    ///
+    /// Runs to completion on the calling thread; shells must call this from a background worker
+    /// and marshal `on_event` invocations back to their UI thread themselves. Never call this while
+    /// holding a lock `on_event` might need.
+    pub fn start_log_graph(
+        &self,
+        request: LogGraphRequest,
+        token: GraphLoadToken,
+        mut on_event: impl FnMut(LogGraphEvent),
+    ) {
+        on_worker_stack(|| {
+            let clock = SystemClock;
+            let guard = RequestGuard::new(token, &clock, request.first_result_budget);
+            if let Err(error) = self.run_log_graph_session(&request, &guard, &mut on_event) {
+                on_event(LogGraphEvent::Failed(error));
+            }
+        })
+    }
+
+    fn run_log_graph_session(
+        &self,
+        request: &LogGraphRequest,
+        guard: &RequestGuard<'_>,
+        on_event: &mut impl FnMut(LogGraphEvent),
+    ) -> CoreResult<()> {
+        let repo = self.get_repo();
+        let expression = self.parse_revset_str(&repo, &request.revset)?;
+        let revset_result = self.evaluate_typed_revset(&repo, expression.clone())?;
+        let prioritized_ids = self.log_graph_prioritized_ids(&repo, &expression)?;
+
+        let mut topo_order =
+            TopoGroupedGraph::new(revset_result.stream_graph(), |id: &CommitId| id);
+        for id in prioritized_ids {
+            topo_order.prioritize_branch(id);
+        }
+
+        let root_commit_id = repo.store().root_commit_id();
+        let mut stream = std::pin::pin!(topo_order.stream());
+
+        let mut raw_rows: Vec<GraphRowData> = Vec::new();
+        let mut published_rows: u32 = 0;
+        let mut next_threshold: u32 = request.initial_rows.max(1);
+        let mut consumed: u64 = 0;
+        let background_batch_rows = u64::from(request.background_batch_rows.max(1));
+
+        loop {
+            if guard.is_canceled() {
+                on_event(LogGraphEvent::Canceled);
+                return Ok(());
+            }
+            let Some(result) = block_on(stream.next()) else {
+                break;
+            };
+            let (commit_id, edge_list) = result.map_err(|e| CoreError::Internal {
+                message: format!("graph stream: {e}"),
+            })?;
+            let commit = repo
+                .store()
+                .get_commit(&commit_id)
+                .map_err(|e| CoreError::Internal {
+                    message: format!("get commit: {e}"),
+                })?;
+            consumed += 1;
+            if !self.should_include_in_log(&repo, &commit) {
+                continue;
+            }
+            raw_rows.push((commit, collapse_graph_edges(edge_list, root_commit_id)));
+
+            if consumed.is_multiple_of(background_batch_rows) {
+                if guard.is_canceled() {
+                    on_event(LogGraphEvent::Canceled);
+                    return Ok(());
+                }
+                on_event(LogGraphEvent::Progress(LogGraphProgress {
+                    consumed_rows: consumed,
+                    materialized_rows: u64::from(published_rows),
+                    elapsed: guard.elapsed(),
+                    first_result_budget_expired: guard.first_result_budget_expired(),
+                }));
+            }
+
+            let available_to_publish =
+                (raw_rows.len() as u32).saturating_sub(MAX_CONTINUOUS_CONNECTOR_ROWS as u32);
+            if available_to_publish >= next_threshold {
+                self.publish_log_graph_prefix(
+                    &repo,
+                    &raw_rows,
+                    next_threshold,
+                    false,
+                    guard,
+                    on_event,
+                )?;
+                published_rows = next_threshold;
+                next_threshold = next_threshold.saturating_mul(2);
+            }
+        }
+
+        if guard.is_canceled() {
+            on_event(LogGraphEvent::Canceled);
+            return Ok(());
+        }
+
+        let total_rows = raw_rows.len() as u32;
+        if total_rows > published_rows || published_rows == 0 {
+            self.publish_log_graph_prefix(&repo, &raw_rows, total_rows, true, guard, on_event)?;
+        }
+
+        on_event(LogGraphEvent::Finished);
+        Ok(())
+    }
+
+    /// Materializes `raw_rows[..threshold]` (plus look-ahead for layout) and publishes it as one
+    /// snapshot. Look-ahead rows are used only to stabilize connector projection at the prefix
+    /// boundary; only the first `threshold` rows are published.
+    fn publish_log_graph_prefix(
         &self,
         repo: &Arc<ReadonlyRepo>,
-        rows: Vec<GraphRowData>,
+        raw_rows: &[GraphRowData],
+        threshold: u32,
+        is_final: bool,
+        guard: &RequestGuard<'_>,
+        on_event: &mut impl FnMut(LogGraphEvent),
+    ) -> CoreResult<()> {
+        if guard.is_canceled() {
+            return Ok(());
+        }
+        let window_len = if is_final {
+            raw_rows.len()
+        } else {
+            (threshold as usize + MAX_CONTINUOUS_CONNECTOR_ROWS).min(raw_rows.len())
+        };
+        let window = &raw_rows[..window_len];
+        let entries_with_lookahead = self.materialize_graph_entries(repo, window)?;
+        if guard.is_canceled() {
+            return Ok(());
+        }
+        let layout = DagLayout::compute(&entries_with_lookahead);
+        let publish_len = (threshold as usize).min(entries_with_lookahead.len());
+        let entries = entries_with_lookahead[..publish_len].to_vec();
+        let rows = layout.rows[..publish_len].to_vec();
+        on_event(LogGraphEvent::Snapshot(LogGraphSnapshot {
+            entries,
+            layout: DagLayout {
+                rows,
+                logical_column_count: layout.logical_column_count,
+            },
+            loaded_rows: publish_len as u32,
+            is_complete: is_final,
+        }));
+        Ok(())
+    }
+
+    pub(crate) fn materialize_graph_entries(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
     ) -> CoreResult<Vec<GraphEntry>> {
         on_worker_stack(|| {
             let metadata_started = Instant::now();
@@ -242,7 +422,11 @@ impl Repo {
                     .collect::<Vec<_>>();
                 drop(cache);
                 let empty_check_count = computed.len();
-                self.empty_commit_cache.write().unwrap().extend(computed);
+                bounded_extend(
+                    &mut self.empty_commit_cache.write().unwrap(),
+                    computed,
+                    EMPTY_COMMIT_CACHE_MAX_ENTRIES,
+                );
                 (states, empty_check_count)
             };
             tracing::debug!(
@@ -253,12 +437,12 @@ impl Repo {
             let entries: Vec<GraphEntry> = {
                 let span = tracing::debug_span!("log_graph.commit_materialization");
                 let _entered = span.enter();
-                rows.into_iter()
+                rows.iter()
                     .zip(empty_states)
                     .map(|((commit, edges), is_empty)| GraphEntry {
                         change: self.commit_to_change_info(
                             repo,
-                            &commit,
+                            commit,
                             ChangeInfoContext {
                                 immutable_ids: Some(&immutable_ids),
                                 ref_index: Some(&ref_index),
@@ -266,7 +450,7 @@ impl Repo {
                                 is_empty: Some(is_empty),
                             },
                         ),
-                        edges,
+                        edges: edges.clone(),
                     })
                     .collect()
             };
@@ -581,6 +765,29 @@ mod tests {
 
     fn cid(hex: &'static str) -> CommitId {
         CommitId::from_hex(hex)
+    }
+
+    #[test]
+    fn bounded_extend_clears_before_exceeding_the_cap() {
+        let mut cache = HashMap::new();
+        cache.insert(CommitId::new(vec![1; 20]), true);
+        cache.insert(CommitId::new(vec![2; 20]), false);
+
+        // Adding a third entry with cap 2 clears first, then inserts only the new batch.
+        bounded_extend(&mut cache, vec![(CommitId::new(vec![3; 20]), true)], 2);
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(&CommitId::new(vec![3; 20])), Some(&true));
+    }
+
+    #[test]
+    fn bounded_extend_keeps_entries_while_under_the_cap() {
+        let mut cache = HashMap::new();
+        cache.insert(CommitId::new(vec![1; 20]), true);
+
+        bounded_extend(&mut cache, vec![(CommitId::new(vec![2; 20]), false)], 100);
+
+        assert_eq!(cache.len(), 2);
     }
 
     #[test]
