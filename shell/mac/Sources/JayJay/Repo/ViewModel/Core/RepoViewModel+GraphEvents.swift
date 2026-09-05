@@ -17,18 +17,15 @@ extension RepoViewModel {
                 applySnapshotEvent(snapshot, context: context)
             case let .progress(_, _, _, firstResultBudgetExpired):
                 applyGraphProgress(firstResultBudgetExpired: firstResultBudgetExpired)
+            case let .emptyStates(updates):
+                applyEmptyStates(updates)
             case .paused:
                 graphPaused = true
                 isLoading = false
                 isRefreshingInFlight = false
                 resumePendingBackgroundRefresh()
             case .finished:
-                finishGraphLoad(generation: context.generation)
-                canLoadMore = Self.canLoadMore(revset: context.revset, loadedCount: graphEntries.count)
-                if context.isAutoTriggered, isBackgroundRefreshSuspended {
-                    hasPendingBackgroundRefresh = true
-                }
-                resumePendingBackgroundRefresh()
+                applyGraphFinished(context: context)
             case .canceled:
                 finishGraphLoad(generation: context.generation)
                 resumePendingBackgroundRefresh()
@@ -40,9 +37,41 @@ extension RepoViewModel {
     }
 
     @MainActor
+    private func applyGraphFinished(context: RepoGraphRefreshContext) {
+        finishGraphLoad(generation: context.generation)
+        canLoadMore = Self.canLoadMore(revset: context.revset, loadedCount: graphEntries.count)
+        if context.isAutoTriggered, isBackgroundRefreshSuspended {
+            hasPendingBackgroundRefresh = true
+        }
+        resumePendingBackgroundRefresh()
+    }
+
+    @MainActor
     private func applyGraphProgress(firstResultBudgetExpired: Bool) {
         guard !graphFirstSnapshotApplied, firstResultBudgetExpired else { return }
         graphLoadSlow = true
+    }
+
+    /// Apply deferred `is_empty` corrections to already-published rows. Merge and off-page rows are
+    /// published as non-empty and refined once their parent-tree merge completes off the first-paint
+    /// path; corrections arrive after every snapshot, so `graphEntries` is stable here.
+    @MainActor
+    private func applyEmptyStates(_ updates: [EmptyStateUpdate]) {
+        guard !updates.isEmpty else { return }
+        var correctionsByCommitId: [String: Bool] = [:]
+        correctionsByCommitId.reserveCapacity(updates.count)
+        for update in updates {
+            correctionsByCommitId[update.commitId] = update.isEmpty
+        }
+        for index in graphEntries.indices {
+            guard let isEmpty = correctionsByCommitId[graphEntries[index].change.commitId.id],
+                  graphEntries[index].change.isEmpty != isEmpty
+            else {
+                continue
+            }
+            graphEntries[index] = graphEntries[index]
+                .withChange(graphEntries[index].change.withIsEmpty(isEmpty))
+        }
     }
 
     @MainActor
@@ -95,7 +124,7 @@ extension RepoViewModel {
 private extension LogGraphEvent {
     var isGraphLoadUpdate: Bool {
         switch self {
-            case .snapshot, .progress: true
+            case .snapshot, .progress, .emptyStates: true
             case .finished, .paused, .canceled, .failed: false
         }
     }

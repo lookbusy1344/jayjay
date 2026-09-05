@@ -14,6 +14,20 @@ fn build_linear_repo(commit_count: u32) -> (tempfile::TempDir, std::path::PathBu
     (temp_dir, repo_path)
 }
 
+/// A repository whose only merge introduces no changes over its parents, so it is empty. The merge
+/// forces the deferred empty-state path: a two-parent row is never resolved by the cheap classifier.
+fn build_empty_merge_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    let temp_dir = init_jj_repo();
+    let repo_path = temp_dir.path().join("repo");
+    run_jj_in(&repo_path, &["describe", "-m", "rootbase"]);
+    run_jj_in(&repo_path, &["new", "-m", "leftchange"]);
+    run_jj_in(&repo_path, &["bookmark", "create", "left", "-r", "@"]);
+    run_jj_in(&repo_path, &["new", "left-", "-m", "rightchange"]);
+    run_jj_in(&repo_path, &["bookmark", "create", "right", "-r", "@"]);
+    run_jj_in(&repo_path, &["new", "left", "right", "-m", "themerge"]);
+    (temp_dir, repo_path)
+}
+
 fn request(revset: &str, initial_rows: u32, background_batch_rows: u32) -> LogGraphRequest {
     LogGraphRequest {
         revset: revset.to_owned(),
@@ -125,6 +139,55 @@ fn reaching_the_row_ceiling_pauses_then_continues_the_same_session() {
     assert_eq!(published.last().unwrap().loaded_rows as usize, full.len());
     assert!(published.last().unwrap().is_complete);
     assert!(matches!(events.last(), Some(LogGraphEvent::Finished)));
+}
+
+#[test]
+fn an_empty_merge_is_published_nonempty_then_corrected_by_a_refine_event() {
+    let (_temp_dir, repo_path) = build_empty_merge_repo();
+    let repo = Repo::open(&repo_path).expect("open repo");
+
+    // Run the progressive session against a cold empty-state cache.
+    let mut events = Vec::new();
+    repo.start_log_graph(request("all()", 50, 500), GraphLoadToken::new(), |event| {
+        events.push(event);
+    });
+
+    // The published snapshot defers the merge's expensive check: it appears non-empty at first.
+    let published_merge = snapshots(&events)
+        .into_iter()
+        .next_back()
+        .expect("a snapshot")
+        .entries
+        .iter()
+        .find(|entry| entry.change.description.trim() == "themerge")
+        .cloned()
+        .expect("merge present in snapshot");
+    let merge_id = published_merge.change.commit_id.id.clone();
+    assert!(
+        !published_merge.change.is_empty,
+        "merge is deferred as non-empty at publish time"
+    );
+
+    // A later refine event corrects it to empty.
+    let corrected = events.iter().any(|event| match event {
+        LogGraphEvent::EmptyStates(updates) => updates
+            .iter()
+            .any(|update| update.commit_id == merge_id && update.is_empty),
+        _ => false,
+    });
+    assert!(
+        corrected,
+        "an EmptyStates event corrects the merge to empty"
+    );
+    assert!(matches!(events.last(), Some(LogGraphEvent::Finished)));
+
+    // The non-progressive path resolves emptiness eagerly, so it always sees the merge as empty.
+    let full = repo.log_graph("all()").expect("full load");
+    let merge = full
+        .iter()
+        .find(|entry| entry.change.commit_id.id == merge_id)
+        .expect("merge present in full load");
+    assert!(merge.change.is_empty, "the unedited merge is empty");
 }
 
 #[test]

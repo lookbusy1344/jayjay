@@ -136,7 +136,9 @@ fn main() {
     let mut rows_retained = 0u32;
     let mut rows_consumed = 0u64;
     let mut snapshots = 0u32;
+    let mut empty_corrections = 0u64;
     let mut first_snapshot: Option<Duration> = None;
+    let mut last_snapshot: Option<Duration> = None;
     let mut outcome = "no terminal event";
     let load_started = Instant::now();
     let token = GraphLoadToken::new();
@@ -144,6 +146,7 @@ fn main() {
     repo.start_log_graph(request, token, |event| match event {
         LogGraphEvent::Snapshot(snapshot) => {
             first_snapshot.get_or_insert_with(|| load_started.elapsed());
+            last_snapshot = Some(load_started.elapsed());
             rows_retained = snapshot.loaded_rows;
             snapshots += 1;
         }
@@ -155,6 +158,7 @@ fn main() {
         LogGraphEvent::Canceled => {}
         LogGraphEvent::Failed(_) => outcome = "failed",
         LogGraphEvent::Progress(progress) => rows_consumed = progress.consumed_rows,
+        LogGraphEvent::EmptyStates(updates) => empty_corrections += updates.len() as u64,
     });
     let load_elapsed = load_started.elapsed();
 
@@ -164,8 +168,14 @@ fn main() {
         Some(elapsed) => println!("first snapshot: {:.1} ms", millis(elapsed)),
         None => println!("first snapshot: none published"),
     }
+    if let Some(elapsed) = last_snapshot {
+        println!(
+            "last snapshot (all rows on screen): {:.1} ms",
+            millis(elapsed)
+        );
+    }
     println!(
-        "total load: {:.1} ms  ({outcome}, {snapshots} snapshots, {rows_consumed} rows consumed, {rows_retained} rows retained)",
+        "total load: {:.1} ms  ({outcome}, {snapshots} snapshots, {rows_consumed} rows consumed, {rows_retained} rows retained, {empty_corrections} empty corrections)",
         millis(load_elapsed)
     );
     if rows_retained > 0 {

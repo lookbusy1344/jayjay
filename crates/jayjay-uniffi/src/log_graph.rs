@@ -101,9 +101,26 @@ impl From<core::LogGraphSnapshot> for LogGraphSnapshot {
     }
 }
 
+/// A late correction to a published row's `is_empty` flag; merge and off-page rows are published
+/// as non-empty and refined once their parent-tree merge completes off the first-paint path.
+#[derive(uniffi::Record)]
+pub struct EmptyStateUpdate {
+    pub commit_id: String,
+    pub is_empty: bool,
+}
+
+impl From<core::EmptyStateUpdate> for EmptyStateUpdate {
+    fn from(update: core::EmptyStateUpdate) -> Self {
+        Self {
+            commit_id: update.commit_id,
+            is_empty: update.is_empty,
+        }
+    }
+}
+
 /// One update from a running session. A session emits zero or more
-/// `Snapshot`/`Progress`/`Paused` events, then exactly one terminal event (`Finished`, `Canceled`,
-/// or `Failed`).
+/// `Snapshot`/`Progress`/`EmptyStates`/`Paused` events, then exactly one terminal event
+/// (`Finished`, `Canceled`, or `Failed`).
 #[derive(uniffi::Enum)]
 pub enum LogGraphEvent {
     Snapshot {
@@ -114,6 +131,9 @@ pub enum LogGraphEvent {
         materialized_rows: u64,
         elapsed_ms: u64,
         first_result_budget_expired: bool,
+    },
+    EmptyStates {
+        updates: Vec<EmptyStateUpdate>,
     },
     Finished,
     Paused,
@@ -134,6 +154,9 @@ impl From<core::LogGraphEvent> for LogGraphEvent {
                 materialized_rows: progress.materialized_rows,
                 elapsed_ms: progress.elapsed.as_millis() as u64,
                 first_result_budget_expired: progress.first_result_budget_expired,
+            },
+            core::LogGraphEvent::EmptyStates(updates) => Self::EmptyStates {
+                updates: updates.into_iter().map(EmptyStateUpdate::from).collect(),
             },
             core::LogGraphEvent::Finished => Self::Finished,
             core::LogGraphEvent::Paused => Self::Paused,

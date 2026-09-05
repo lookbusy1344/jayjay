@@ -14,8 +14,8 @@ use jj_lib::revset::{self, SymbolResolver, UserRevsetExpression};
 
 use super::Repo;
 use super::graph_load::{
-    BACKGROUND_LOG_BATCH_ROWS, GraphLoadToken, LogGraphEvent, LogGraphProgress, LogGraphRequest,
-    LogGraphSnapshot, RequestGuard, SystemClock,
+    BACKGROUND_LOG_BATCH_ROWS, EmptyStateUpdate, GraphLoadToken, LogGraphEvent, LogGraphProgress,
+    LogGraphRequest, LogGraphSnapshot, RequestGuard, SystemClock,
 };
 use super::resolve::{ChangeInfoContext, CommitRefIndex};
 use super::support::{block_on, on_worker_stack};
@@ -367,46 +367,94 @@ impl Repo {
                 // The ceiling is reached while the stream still has rows; pause for Continue Loading
                 // instead of retaining an unbounded revset in memory.
                 if published_rows >= row_ceiling {
-                    if guard.is_canceled() {
-                        on_event(LogGraphEvent::Canceled);
-                        return Ok(());
+                    match self.pause_at_row_ceiling(
+                        &repo,
+                        &raw_rows[..published_rows as usize],
+                        row_ceiling,
+                        guard,
+                        on_event,
+                    )? {
+                        Some(higher_ceiling) => row_ceiling = higher_ceiling,
+                        None => {
+                            on_event(LogGraphEvent::Canceled);
+                            return Ok(());
+                        }
                     }
-                    on_event(LogGraphEvent::Paused);
-                    let Some(higher_ceiling) = guard.wait_for_higher_row_ceiling(row_ceiling)
-                    else {
-                        on_event(LogGraphEvent::Canceled);
-                        return Ok(());
-                    };
-                    row_ceiling = higher_ceiling;
                 }
                 next_threshold = next_threshold.max(published_rows).saturating_mul(2);
             }
         }
 
+        self.finish_log_graph_session(
+            &repo,
+            &raw_rows,
+            published_rows,
+            consumed,
+            last_reported_consumed,
+            guard,
+            on_event,
+        )
+    }
+
+    /// Publish any rows the loop consumed past the last published prefix, refine the whole result's
+    /// empty flags, and emit the terminal event. Emits `Canceled` instead of `Finished` if the
+    /// session was canceled at any of the cooperative checks.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_log_graph_session(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        raw_rows: &[GraphRowData],
+        published_rows: u32,
+        consumed: u64,
+        last_reported_consumed: u64,
+        guard: &RequestGuard<'_>,
+        on_event: &mut impl FnMut(LogGraphEvent),
+    ) -> CoreResult<()> {
         if guard.is_canceled() {
             on_event(LogGraphEvent::Canceled);
             return Ok(());
         }
-
         let total_rows = raw_rows.len() as u32;
         if last_reported_consumed != consumed {
             report_graph_progress(consumed, published_rows, guard, on_event);
         }
         if (total_rows > published_rows || published_rows == 0)
-            && !self
-                .publish_log_graph_prefix(&repo, &raw_rows, total_rows, true, guard, on_event)?
+            && !self.publish_log_graph_prefix(repo, raw_rows, total_rows, true, guard, on_event)?
         {
             on_event(LogGraphEvent::Canceled);
             return Ok(());
         }
-
         if guard.is_canceled() {
             on_event(LogGraphEvent::Canceled);
             return Ok(());
         }
-
+        if !self.refine_empty_states(repo, &raw_rows[..total_rows as usize], guard, on_event)? {
+            on_event(LogGraphEvent::Canceled);
+            return Ok(());
+        }
         on_event(LogGraphEvent::Finished);
         Ok(())
+    }
+
+    /// Announce the pause at the retained-row ceiling, refine the visible prefix's empty flags while
+    /// the worker would otherwise idle, then block until Continue Loading raises the ceiling. Returns
+    /// the raised ceiling, or `None` if the session was canceled while paused or refining.
+    fn pause_at_row_ceiling(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        prefix: &[GraphRowData],
+        current_ceiling: u32,
+        guard: &RequestGuard<'_>,
+        on_event: &mut impl FnMut(LogGraphEvent),
+    ) -> CoreResult<Option<u32>> {
+        if guard.is_canceled() {
+            return Ok(None);
+        }
+        on_event(LogGraphEvent::Paused);
+        if !self.refine_empty_states(repo, prefix, guard, on_event)? {
+            return Ok(None);
+        }
+        Ok(guard.wait_for_higher_row_ceiling(current_ceiling))
     }
 
     /// Materializes `raw_rows[..threshold]` (plus look-ahead for layout) and publishes it as one
@@ -430,8 +478,12 @@ impl Repo {
             (threshold as usize + MAX_CONTINUOUS_CONNECTOR_ROWS).min(raw_rows.len())
         };
         let publish_len = (threshold as usize).min(window_len);
-        let Some(entries) =
-            self.materialize_graph_entries_guarded(repo, &raw_rows[..publish_len], Some(guard))?
+        let Some(entries) = self.materialize_graph_entries_guarded(
+            repo,
+            &raw_rows[..publish_len],
+            Some(guard),
+            true,
+        )?
         else {
             return Ok(false);
         };
@@ -479,15 +531,19 @@ impl Repo {
         repo: &Arc<ReadonlyRepo>,
         rows: &[GraphRowData],
     ) -> CoreResult<Vec<GraphEntry>> {
-        self.materialize_graph_entries_guarded(repo, rows, None)
+        self.materialize_graph_entries_guarded(repo, rows, None, false)
             .map(|entries| entries.expect("an unguarded materialization cannot be canceled"))
     }
 
+    /// `defer_empty` resolves only the cheap `is_empty` states (cache hits and single-in-page-parent
+    /// rows) and leaves merge/off-page rows as non-empty for a later `refine_empty_states` pass; the
+    /// non-progressive path passes `false` to compute every state eagerly.
     fn materialize_graph_entries_guarded(
         &self,
         repo: &Arc<ReadonlyRepo>,
         rows: &[GraphRowData],
         guard: Option<&RequestGuard<'_>>,
+        defer_empty: bool,
     ) -> CoreResult<Option<Vec<GraphEntry>>> {
         on_worker_stack(|| {
             let metadata_started = Instant::now();
@@ -532,10 +588,14 @@ impl Repo {
                 return Ok(None);
             }
             let empty_checks_started = Instant::now();
-            let Some((empty_states, empty_check_count)) =
-                self.empty_states_guarded(repo, rows, guard)?
-            else {
-                return Ok(None);
+            let (empty_states, empty_check_count) = if defer_empty {
+                let (states, pending) = self.classify_empty_states(rows);
+                (states, pending.len())
+            } else {
+                let Some(resolved) = self.empty_states_guarded(repo, rows, guard)? else {
+                    return Ok(None);
+                };
+                resolved
             };
             tracing::debug!(
                 elapsed_us = empty_checks_started.elapsed().as_micros() as u64,
@@ -590,22 +650,18 @@ impl Repo {
         })
     }
 
-    fn empty_states_guarded(
-        &self,
-        repo: &Arc<ReadonlyRepo>,
-        rows: &[GraphRowData],
-        guard: Option<&RequestGuard<'_>>,
-    ) -> CoreResult<Option<(Vec<bool>, usize)>> {
-        let span = tracing::debug_span!("log_graph.empty_checks");
-        let _entered = span.enter();
+    /// Resolve `is_empty` for the rows decidable without a parent-tree merge: cache hits and
+    /// single-parent rows whose parent is on the page. Returns the states (non-empty where still
+    /// undecided) and the indices of merge/off-page rows that need the expensive check. Caches the
+    /// cheaply resolved results.
+    fn classify_empty_states(&self, rows: &[GraphRowData]) -> (Vec<bool>, Vec<usize>) {
         let displayed_tree_ids = rows
             .iter()
             .map(|(commit, _)| (commit.id().clone(), commit.tree_ids()))
             .collect::<HashMap<_, _>>();
-        // Resolve cached and single-displayed-parent rows cheaply; merge-tree checks dominate large histories, so defer those to the bounded parallel pass.
         let mut states = vec![false; rows.len()];
         let mut newly = Vec::new();
-        let mut to_compute: Vec<(usize, &jj_lib::commit::Commit)> = Vec::new();
+        let mut pending = Vec::new();
         {
             let cache = self.empty_commit_cache.read().unwrap();
             for (ix, (commit, _)) in rows.iter().enumerate() {
@@ -618,18 +674,8 @@ impl Repo {
                     states[ix] = is_empty;
                     newly.push((commit.id().clone(), is_empty));
                 } else {
-                    to_compute.push((ix, commit));
+                    pending.push(ix);
                 }
-            }
-        }
-        let empty_check_count = to_compute.len();
-        for batch in to_compute.chunks(BACKGROUND_LOG_BATCH_ROWS as usize) {
-            if guard.is_some_and(RequestGuard::is_canceled) {
-                return Ok(None);
-            }
-            for (ix, id, is_empty) in compute_empty_states(repo, batch) {
-                states[ix] = is_empty;
-                newly.push((id, is_empty));
             }
         }
         bounded_extend(
@@ -637,7 +683,101 @@ impl Repo {
             newly,
             EMPTY_COMMIT_CACHE_MAX_ENTRIES,
         );
+        (states, pending)
+    }
+
+    /// Run the parent-tree-merge `is_empty` check over `pending` rows in cancelable batches, caching
+    /// every result and handing each batch's resolved `(index, commit id, is_empty)` triples to
+    /// `sink`. Returns `false` if `is_canceled` fired before a batch. Callers decide what to do with
+    /// each batch: fill a states vector, or emit corrections.
+    fn resolve_pending_empty_states(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
+        pending: &[usize],
+        is_canceled: impl Fn() -> bool,
+        mut sink: impl FnMut(&[(usize, CommitId, bool)]),
+    ) -> bool {
+        for batch_ixs in pending.chunks(BACKGROUND_LOG_BATCH_ROWS as usize) {
+            if is_canceled() {
+                return false;
+            }
+            let batch: Vec<(usize, &jj_lib::commit::Commit)> =
+                batch_ixs.iter().map(|&ix| (ix, &rows[ix].0)).collect();
+            let resolved = compute_empty_states(repo, &batch);
+            bounded_extend(
+                &mut self.empty_commit_cache.write().unwrap(),
+                resolved
+                    .iter()
+                    .map(|(_, id, is_empty)| (id.clone(), *is_empty))
+                    .collect(),
+                EMPTY_COMMIT_CACHE_MAX_ENTRIES,
+            );
+            sink(&resolved);
+        }
+        true
+    }
+
+    fn empty_states_guarded(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
+        guard: Option<&RequestGuard<'_>>,
+    ) -> CoreResult<Option<(Vec<bool>, usize)>> {
+        let span = tracing::debug_span!("log_graph.empty_checks");
+        let _entered = span.enter();
+        let (mut states, pending) = self.classify_empty_states(rows);
+        let empty_check_count = pending.len();
+        let completed = self.resolve_pending_empty_states(
+            repo,
+            rows,
+            &pending,
+            || guard.is_some_and(RequestGuard::is_canceled),
+            |resolved| {
+                for &(ix, _, is_empty) in resolved {
+                    states[ix] = is_empty;
+                }
+            },
+        );
+        if !completed {
+            return Ok(None);
+        }
         Ok(Some((states, empty_check_count)))
+    }
+
+    /// Compute the deferred merge/off-page `is_empty` states for an already-published prefix and
+    /// emit each batch's empty rows as an `EmptyStates` correction. Cheap rows were resolved at
+    /// publish time and cached rows (including any refined in an earlier prefix) are skipped, so this
+    /// only pays for rows it has not seen. Returns `false` if canceled mid-pass.
+    fn refine_empty_states(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        rows: &[GraphRowData],
+        guard: &RequestGuard<'_>,
+        on_event: &mut impl FnMut(LogGraphEvent),
+    ) -> CoreResult<bool> {
+        let span = tracing::debug_span!("log_graph.empty_refine");
+        let _entered = span.enter();
+        let (_states, pending) = self.classify_empty_states(rows);
+        Ok(self.resolve_pending_empty_states(
+            repo,
+            rows,
+            &pending,
+            || guard.is_canceled(),
+            |resolved| {
+                let updates: Vec<EmptyStateUpdate> = resolved
+                    .iter()
+                    .filter(|(_, _, is_empty)| *is_empty)
+                    .map(|(_, id, _)| EmptyStateUpdate {
+                        commit_id: id.hex(),
+                        is_empty: true,
+                    })
+                    .collect();
+                if !updates.is_empty() {
+                    on_event(LogGraphEvent::EmptyStates(updates));
+                }
+            },
+        ))
     }
 
     /// Refuse to rewrite `commit` (resolved from `rev`) when it is immutable, using the same `immutable()` revset that drives `ChangeInfo::is_immutable`; rewrite paths that bypass the jj CLI get no immutability enforcement from jj-lib and must call this themselves.

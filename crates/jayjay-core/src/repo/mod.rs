@@ -50,8 +50,9 @@ pub use environment::jj_binary;
 pub use environment::login_shell;
 pub use environment::login_shell_path;
 pub use graph_load::{
-    BACKGROUND_LOG_BATCH_ROWS, FIRST_RESULT_BUDGET, GraphLoadToken, INITIAL_LOG_BATCH_ROWS,
-    LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS,
+    BACKGROUND_LOG_BATCH_ROWS, EmptyStateUpdate, FIRST_RESULT_BUDGET, GraphLoadToken,
+    INITIAL_LOG_BATCH_ROWS, LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot,
+    MAX_AUTO_LOADED_ROWS,
 };
 pub use init::init_jj_git_repo;
 pub use review_note_output::{

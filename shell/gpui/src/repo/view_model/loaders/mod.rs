@@ -2,6 +2,7 @@ mod diff;
 mod diff_compute;
 mod review_notes;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -345,6 +346,12 @@ impl RepoViewModel {
                     cx.notify();
                 }
             }
+            RefreshUpdate::Graph(LogGraphEvent::EmptyStates(updates)) => {
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                self.apply_empty_states(&updates, cx);
+            }
             RefreshUpdate::Graph(LogGraphEvent::Paused) => {
                 if self.loading.refresh_gen != generation {
                     return;
@@ -465,6 +472,32 @@ impl RepoViewModel {
             self.clear_detail_state();
             self.compare = None;
             self.pr_info = None;
+        }
+        cx.notify();
+    }
+
+    /// Apply a batch of deferred `is_empty` corrections to the already-published rows. Merge and
+    /// off-page rows are published as non-empty; these refine them once their parent-tree merge
+    /// completes off the first-paint path.
+    fn apply_empty_states(
+        &mut self,
+        updates: &[jayjay_core::EmptyStateUpdate],
+        cx: &mut Context<Self>,
+    ) {
+        if updates.is_empty() {
+            return;
+        }
+        let corrections: HashMap<&str, bool> = updates
+            .iter()
+            .map(|update| (update.commit_id.as_str(), update.is_empty))
+            .collect();
+        let entries = Arc::make_mut(&mut self.graph.entries);
+        let changes = Arc::make_mut(&mut self.graph.changes);
+        for (entry, change) in entries.iter_mut().zip(changes.iter_mut()) {
+            if let Some(&is_empty) = corrections.get(entry.change.commit_id.id.as_str()) {
+                entry.change.is_empty = is_empty;
+                change.is_empty = is_empty;
+            }
         }
         cx.notify();
     }

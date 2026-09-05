@@ -176,13 +176,24 @@ pub struct LogGraphProgress {
     pub first_result_budget_expired: bool,
 }
 
+/// A late correction to a commit's `is_empty` flag. Progressive snapshots publish merge and
+/// off-page-boundary commits as non-empty because deciding their emptiness needs a parent-tree
+/// merge; those checks run after the prefix is on screen and their results arrive as these updates.
+#[derive(Debug, Clone)]
+pub struct EmptyStateUpdate {
+    pub commit_id: String,
+    pub is_empty: bool,
+}
+
 /// One update from a running graph-load session. A session emits zero or more
-/// `Snapshot`/`Progress`/`Paused` events, then exactly one terminal event (`Finished`, `Canceled`,
-/// or `Failed`).
+/// `Snapshot`/`Progress`/`EmptyStates`/`Paused` events, then exactly one terminal event
+/// (`Finished`, `Canceled`, or `Failed`).
 #[derive(Debug)]
 pub enum LogGraphEvent {
     Snapshot(LogGraphSnapshot),
     Progress(LogGraphProgress),
+    /// Corrections to `is_empty` flags for already-published rows, computed off the first-paint path.
+    EmptyStates(Vec<EmptyStateUpdate>),
     Finished,
     /// The retained-row ceiling was reached with more history still available. The worker waits;
     /// a Continue Loading action raises the token's ceiling and resumes the same stream.
