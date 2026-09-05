@@ -419,6 +419,11 @@ impl RepoWindow {
         vm.update(cx, |vm, cx| vm.load_more(cx));
     }
 
+    pub(crate) fn continue_loading(&mut self, cx: &mut Context<Self>) {
+        let vm = self.vm.clone();
+        vm.update(cx, |vm, cx| vm.continue_loading(cx));
+    }
+
     pub(crate) fn mark_copied(&mut self, id: SharedString, cx: &mut Context<Self>) {
         self.feedback.recently_copied = Some(id.clone());
         cx.notify();

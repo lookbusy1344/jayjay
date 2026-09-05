@@ -9,6 +9,9 @@ use crate::types::{CoreError, GraphEntry};
 pub const INITIAL_LOG_BATCH_ROWS: u32 = 50;
 pub const BACKGROUND_LOG_BATCH_ROWS: u32 = 500;
 pub const FIRST_RESULT_BUDGET: Duration = Duration::from_secs(10);
+/// Retained-row ceiling before a session pauses for an explicit Continue Loading. Bounds resident
+/// memory on an unbounded revset (e.g. `all()`) rather than loading every row automatically.
+pub const MAX_AUTO_LOADED_ROWS: u32 = 10_000;
 
 /// A cooperative cancellation flag for one graph-load session, shared between the core worker
 /// and whichever shell owns the session's lifetime.
@@ -92,6 +95,9 @@ pub struct LogGraphRequest {
     pub initial_rows: u32,
     pub background_batch_rows: u32,
     pub first_result_budget: Duration,
+    /// Retained-row ceiling: once this many rows are published the session pauses (emits `Paused`)
+    /// so the shell can offer Continue Loading. `u32::MAX` disables the pause for non-UI callers.
+    pub row_ceiling: u32,
 }
 
 impl LogGraphRequest {
@@ -101,6 +107,7 @@ impl LogGraphRequest {
             initial_rows: INITIAL_LOG_BATCH_ROWS,
             background_batch_rows: BACKGROUND_LOG_BATCH_ROWS,
             first_result_budget: FIRST_RESULT_BUDGET,
+            row_ceiling: MAX_AUTO_LOADED_ROWS,
         }
     }
 }
@@ -125,12 +132,15 @@ pub struct LogGraphProgress {
 }
 
 /// One update from a running graph-load session. A session emits zero or more `Snapshot`/`Progress`
-/// events, then exactly one of `Finished`, `Canceled`, or `Failed`.
+/// events, then exactly one terminal event (`Finished`, `Paused`, `Canceled`, or `Failed`).
 #[derive(Debug)]
 pub enum LogGraphEvent {
     Snapshot(LogGraphSnapshot),
     Progress(LogGraphProgress),
     Finished,
+    /// The retained-row ceiling was reached with more history still available. The last published
+    /// snapshot stands; a Continue Loading action resumes with a higher ceiling.
+    Paused,
     Canceled,
     Failed(CoreError),
 }

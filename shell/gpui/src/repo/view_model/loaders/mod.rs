@@ -8,7 +8,8 @@ use std::time::Duration;
 use gpui::{Context, SharedString};
 use jayjay_core::{
     BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, GraphLoadToken,
-    LogGraphEvent, LogGraphRequest, LogGraphSnapshot, Repo, WorkspaceInfo, build_default_revset,
+    LogGraphEvent, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo, WorkspaceInfo,
+    build_default_revset,
 };
 
 use super::RepoViewModel;
@@ -176,6 +177,8 @@ impl RepoViewModel {
         self.loading.graph_session = Some(token.clone());
         self.loading.graph_session_canceling = false;
         self.loading.graph_first_snapshot_applied = false;
+        self.loading.graph_paused = false;
+        let row_ceiling = self.effective_row_ceiling();
 
         Self::background_stream(
             cx,
@@ -186,7 +189,10 @@ impl RepoViewModel {
                 if is_err {
                     return;
                 }
-                let request = LogGraphRequest::new(revset);
+                let request = LogGraphRequest {
+                    row_ceiling,
+                    ..LogGraphRequest::new(revset)
+                };
                 repo.start_log_graph(request, token, |event| {
                     let _ = tx.unbounded_send(RefreshUpdate::Graph(event));
                 });
@@ -210,6 +216,36 @@ impl RepoViewModel {
             return;
         }
         self.refresh(false, cx);
+    }
+
+    /// Row ceiling for the next session, resolving the `0` sentinel to the core default.
+    fn effective_row_ceiling(&self) -> u32 {
+        if self.loading.graph_row_ceiling == 0 {
+            MAX_AUTO_LOADED_ROWS
+        } else {
+            self.loading.graph_row_ceiling
+        }
+    }
+
+    /// Resume a session that paused at the row ceiling, doubling the ceiling so the next prefix
+    /// loads more history. Preserves the current selection; a no-op when not paused.
+    pub fn continue_loading(&mut self, cx: &mut Context<Self>) {
+        if !self.loading.graph_paused {
+            return;
+        }
+        self.loading.graph_row_ceiling = self.effective_row_ceiling().saturating_mul(2);
+        self.refresh(false, cx);
+    }
+
+    /// Run an owed auto-refresh if one is pending and refreshes aren't suspended. Returns whether it
+    /// ran; while suspended the pending flag stays set for `set_refresh_suspended` to honor.
+    fn resume_pending_auto_refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.loading.pending_auto_refresh && !self.refresh_suspended {
+            self.loading.pending_auto_refresh = false;
+            self.refresh(true, cx);
+            return true;
+        }
+        false
     }
 
     /// Latch cancellation of the active graph session, if one is running. Returns whether a session
@@ -262,6 +298,18 @@ impl RepoViewModel {
                 self.apply_graph_snapshot(snapshot, previous_selection, cx);
             }
             RefreshUpdate::Graph(LogGraphEvent::Progress(_)) => {}
+            RefreshUpdate::Graph(LogGraphEvent::Paused) => {
+                self.finish_graph_session(generation, cx);
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                // An owed refresh supersedes the paused prefix; otherwise expose Continue Loading.
+                if self.resume_pending_auto_refresh(cx) {
+                    return;
+                }
+                self.loading.graph_paused = true;
+                cx.notify();
+            }
             RefreshUpdate::Graph(LogGraphEvent::Finished) => {
                 self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen != generation {
@@ -281,12 +329,8 @@ impl RepoViewModel {
                 // A stale-session cancel from an FS event leaves a deferred refresh owed; run it now
                 // against fresh state. A user-initiated cancel leaves no pending refresh, so this is
                 // inert. While suspended, keep it owed for `set_refresh_suspended` to run later.
-                if self.loading.refresh_gen == generation
-                    && self.loading.pending_auto_refresh
-                    && !self.refresh_suspended
-                {
-                    self.loading.pending_auto_refresh = false;
-                    self.refresh(true, cx);
+                if self.loading.refresh_gen == generation {
+                    self.resume_pending_auto_refresh(cx);
                 }
             }
             RefreshUpdate::Graph(LogGraphEvent::Failed(error)) => {
@@ -380,6 +424,8 @@ impl RepoViewModel {
             self.revset = trimmed.to_owned().into();
         }
         self.can_load_more = false;
+        // A new revset is a fresh query; drop any raised Continue Loading ceiling.
+        self.loading.graph_row_ceiling = 0;
         self.refresh(false, cx);
     }
 

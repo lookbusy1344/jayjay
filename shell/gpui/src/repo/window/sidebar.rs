@@ -19,13 +19,22 @@ pub(super) fn sidebar(
     width: f32,
     cx: &mut Context<RepoWindow>,
 ) -> AnyElement {
-    let (repo_open, changes, loading_more, show_load_more, default_revset, bookmarks) = {
+    let (
+        repo_open,
+        changes,
+        loading_more,
+        show_load_more,
+        show_continue,
+        default_revset,
+        bookmarks,
+    ) = {
         let vm = view.vm.read(cx);
         (
             vm.repo.is_some(),
             vm.graph.changes.clone(),
             vm.loading.more,
             vm.error.is_none() && vm.can_load_more && !vm.graph.changes.is_empty(),
+            vm.error.is_none() && vm.loading.graph_paused && !vm.graph.changes.is_empty(),
             vm.revset_is_default(),
             vm.graph.bookmarks.clone(),
         )
@@ -48,7 +57,7 @@ pub(super) fn sidebar(
             .into_any_element()
     } else {
         let change_count = changes.len();
-        let row_count = change_count + usize::from(show_load_more);
+        let row_count = change_count + usize::from(show_load_more || show_continue);
         let t_clone = t.clone();
         let scroll = view.scrolls.changes.clone();
         let changes_for_processor = changes.clone();
@@ -78,7 +87,11 @@ pub(super) fn sidebar(
                 range
                     .map(|ix| {
                         if ix == change_count {
-                            return load_more_button(loading_more, &t, cx);
+                            return if show_load_more {
+                                load_more_button(loading_more, &t, cx)
+                            } else {
+                                continue_loading_button(&t, cx)
+                            };
                         }
                         let has_multiple_selection = selected_changes.len() > 1;
                         let is_selected_change = if has_multiple_selection {
@@ -300,6 +313,34 @@ fn commit_box_button(
         .debug_selector(move || id.to_owned())
         .tooltip(text_tooltip(tooltip))
         .on_click(cx.listener(move |view, _: &ClickEvent, _w, cx| handler(view, cx)))
+}
+
+fn continue_loading_button(t: &Theme, cx: &mut Context<RepoWindow>) -> AnyElement {
+    div()
+        .id(SharedString::from("continue-loading"))
+        .flex()
+        .flex_row()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap(px(6.))
+        .px(px(12.))
+        .py(px(6.))
+        .bg(rgb(t.header_bg))
+        .border_t_1()
+        .border_color(rgb(t.border))
+        .text_size(px(FONT_META))
+        .text_color(rgb(t.fg_dim))
+        .cursor_pointer()
+        .debug_selector(|| "sidebar-continue-loading".to_owned())
+        .child(icon_label(
+            glyph::ARROW_DOWN,
+            "Continue loading",
+            12.,
+            t.fg_dim,
+        ))
+        .on_click(cx.listener(|view, _: &ClickEvent, _w, cx| view.continue_loading(cx)))
+        .into_any_element()
 }
 
 fn load_more_button(loading: bool, t: &Theme, cx: &mut Context<RepoWindow>) -> AnyElement {

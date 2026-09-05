@@ -288,16 +288,27 @@ impl Repo {
 
             let available_to_publish =
                 (raw_rows.len() as u32).saturating_sub(MAX_CONTINUOUS_CONNECTOR_ROWS as u32);
-            if available_to_publish >= next_threshold {
+            let publish_target = next_threshold.min(request.row_ceiling);
+            if available_to_publish >= publish_target {
                 self.publish_log_graph_prefix(
                     &repo,
                     &raw_rows,
-                    next_threshold,
+                    publish_target,
                     false,
                     guard,
                     on_event,
                 )?;
-                published_rows = next_threshold;
+                published_rows = publish_target;
+                // The ceiling is reached while the stream still has rows; pause for Continue Loading
+                // instead of retaining an unbounded revset in memory.
+                if published_rows >= request.row_ceiling {
+                    if guard.is_canceled() {
+                        on_event(LogGraphEvent::Canceled);
+                    } else {
+                        on_event(LogGraphEvent::Paused);
+                    }
+                    return Ok(());
+                }
                 next_threshold = next_threshold.saturating_mul(2);
             }
         }

@@ -333,6 +333,50 @@ fn fs_event_mid_graph_session_cancels_the_stale_stream_then_reruns(cx: &mut Test
 }
 
 #[gpui::test]
+fn row_ceiling_pauses_the_load_and_continue_loads_more(cx: &mut TestAppContext) {
+    let fixture = LinearFixture::build();
+    for i in 0..30 {
+        run_jj_in(&fixture.path, &["new", "-m", &format!("extra {i}")]);
+    }
+    let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
+    vm.update(cx, |vm, cx| vm.boot(cx));
+    settle(cx);
+
+    // Load an explicit large revset, then re-run it against a ceiling below its size.
+    vm.update(cx, |vm, cx| vm.apply_revset("all()", cx));
+    settle(cx);
+    vm.update(cx, |vm, cx| {
+        vm.loading.graph_row_ceiling = 4;
+        vm.refresh(false, cx);
+    });
+    settle(cx);
+
+    let rows_at_pause = vm.read_with(cx, |vm, _| {
+        assert!(
+            vm.loading.graph_paused,
+            "a ceiling below the revset size must pause the load"
+        );
+        assert_eq!(
+            vm.graph.changes.len(),
+            4,
+            "the pause publishes exactly the ceiling"
+        );
+        vm.graph.changes.len()
+    });
+
+    vm.update(cx, |vm, cx| vm.continue_loading(cx));
+    settle(cx);
+
+    vm.read_with(cx, |vm, _| {
+        assert!(
+            vm.graph.changes.len() > rows_at_pause,
+            "continue loading must extend the graph past the previous ceiling"
+        );
+        assert!(vm.error.is_none(), "continue errored: {:?}", vm.error);
+    });
+}
+
+#[gpui::test]
 fn selecting_a_change_resets_pr_state(cx: &mut TestAppContext) {
     let fixture = LinearFixture::build();
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));

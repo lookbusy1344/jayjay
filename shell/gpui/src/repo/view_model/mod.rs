@@ -95,6 +95,12 @@ pub struct LoadingState {
     /// True once the active session's first snapshot has been applied; guards selection-restoration
     /// logic so a later snapshot in the same session only appends rows instead of re-selecting.
     graph_first_snapshot_applied: bool,
+    /// True while a session has paused at the row ceiling with more history available; drives the
+    /// Continue Loading affordance.
+    pub graph_paused: bool,
+    /// Row ceiling for the next session; `0` means the core default (`MAX_AUTO_LOADED_ROWS`).
+    /// Continue Loading raises it geometrically; a new revset resets it to `0`.
+    pub graph_row_ceiling: u32,
 }
 
 pub struct RepoViewModel {

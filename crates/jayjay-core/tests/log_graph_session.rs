@@ -20,6 +20,7 @@ fn request(revset: &str, initial_rows: u32, background_batch_rows: u32) -> LogGr
         initial_rows,
         background_batch_rows,
         first_result_budget: Duration::from_secs(10),
+        row_ceiling: u32::MAX,
     }
 }
 
@@ -89,6 +90,56 @@ fn session_publishes_growing_prefixes_before_finishing() {
             .count(),
         1
     );
+}
+
+#[test]
+fn reaching_the_row_ceiling_pauses_and_continue_loads_the_rest() {
+    let (_temp_dir, repo_path) = build_linear_repo(40);
+    let repo = Repo::open(&repo_path).expect("open repo");
+    let full = repo.log_graph("all()").expect("full load");
+    assert!(
+        full.len() > 20,
+        "fixture must exceed the ceiling plus look-ahead"
+    );
+
+    // A ceiling well below the revset size pauses instead of finishing.
+    let mut paused = request("all()", 4, 3);
+    paused.row_ceiling = 8;
+    let mut events = Vec::new();
+    repo.start_log_graph(paused, GraphLoadToken::new(), |event| events.push(event));
+
+    let published = snapshots(&events);
+    let last = published.last().expect("at least one published prefix");
+    assert_eq!(
+        last.loaded_rows, 8,
+        "the pause publishes exactly the ceiling"
+    );
+    assert!(!last.is_complete, "a paused prefix is not complete");
+    assert!(matches!(events.last(), Some(LogGraphEvent::Paused)));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, LogGraphEvent::Finished)),
+        "a ceiling pause must not report completion"
+    );
+
+    // Continuing with a higher ceiling loads the remaining rows and finishes.
+    let mut resumed = request("all()", 4, 3);
+    resumed.row_ceiling = 10_000;
+    let mut resumed_events = Vec::new();
+    repo.start_log_graph(resumed, GraphLoadToken::new(), |event| {
+        resumed_events.push(event)
+    });
+    let resumed_published = snapshots(&resumed_events);
+    assert_eq!(
+        resumed_published.last().unwrap().loaded_rows as usize,
+        full.len()
+    );
+    assert!(resumed_published.last().unwrap().is_complete);
+    assert!(matches!(
+        resumed_events.last(),
+        Some(LogGraphEvent::Finished)
+    ));
 }
 
 #[test]
