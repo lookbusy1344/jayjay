@@ -122,6 +122,23 @@ fn collapse_graph_edges(
     edges
 }
 
+/// Build a layout input straight from a raw graph row and a ref index, so the layout can be computed
+/// without first materializing every row's full `ChangeInfo`.
+fn raw_layout_input(
+    commit: &jj_lib::commit::Commit,
+    edges: &[GraphEdge],
+    refs: &CommitRefIndex,
+) -> DagLayoutInput {
+    let commit_id = commit.id().hex();
+    DagLayoutInput {
+        parents: commit.parent_ids().iter().map(|id| id.hex()).collect(),
+        is_working_copy: refs.is_working_copy(&commit_id),
+        has_ref: refs.has_layout_ref(&commit_id),
+        commit_id,
+        edges: edges.to_vec(),
+    }
+}
+
 impl Repo {
     pub fn log(&self, revset_str: &str) -> CoreResult<Vec<ChangeInfo>> {
         let repo = self.get_repo();
@@ -294,6 +311,7 @@ impl Repo {
         let mut stream = std::pin::pin!(topo_order.stream());
 
         let mut raw_rows: Vec<GraphRowData> = Vec::new();
+        let mut materialized: Vec<GraphEntry> = Vec::new();
         let mut published_rows: u32 = 0;
         let mut next_threshold: u32 = request.initial_rows.max(1);
         let mut row_ceiling = request.row_ceiling.max(1);
@@ -355,6 +373,7 @@ impl Repo {
                 if !self.publish_log_graph_prefix(
                     &repo,
                     &raw_rows,
+                    &mut materialized,
                     publish_target,
                     false,
                     guard,
@@ -388,6 +407,7 @@ impl Repo {
         self.finish_log_graph_session(
             &repo,
             &raw_rows,
+            &mut materialized,
             published_rows,
             consumed,
             last_reported_consumed,
@@ -404,6 +424,7 @@ impl Repo {
         &self,
         repo: &Arc<ReadonlyRepo>,
         raw_rows: &[GraphRowData],
+        materialized: &mut Vec<GraphEntry>,
         published_rows: u32,
         consumed: u64,
         last_reported_consumed: u64,
@@ -419,7 +440,15 @@ impl Repo {
             report_graph_progress(consumed, published_rows, guard, on_event);
         }
         if (total_rows > published_rows || published_rows == 0)
-            && !self.publish_log_graph_prefix(repo, raw_rows, total_rows, true, guard, on_event)?
+            && !self.publish_log_graph_prefix(
+                repo,
+                raw_rows,
+                materialized,
+                total_rows,
+                true,
+                guard,
+                on_event,
+            )?
         {
             on_event(LogGraphEvent::Canceled);
             return Ok(());
@@ -457,13 +486,17 @@ impl Repo {
         Ok(guard.wait_for_higher_row_ceiling(current_ceiling))
     }
 
-    /// Materializes `raw_rows[..threshold]` (plus look-ahead for layout) and publishes it as one
-    /// snapshot. Look-ahead rows are used only to stabilize connector projection at the prefix
-    /// boundary; only the first `threshold` rows are published.
+    /// Publishes one snapshot for the first `threshold` rows. Rows are materialized incrementally
+    /// into `materialized`: each publish only pays for the rows not seen by a previous one, and the
+    /// snapshot's cumulative entries are cloned from that buffer. The layout is computed from the raw
+    /// rows (plus look-ahead to stabilize connector projection at the boundary), so it needs no
+    /// materialized entries.
+    #[allow(clippy::too_many_arguments)]
     fn publish_log_graph_prefix(
         &self,
         repo: &Arc<ReadonlyRepo>,
         raw_rows: &[GraphRowData],
+        materialized: &mut Vec<GraphEntry>,
         threshold: u32,
         is_final: bool,
         guard: &RequestGuard<'_>,
@@ -478,44 +511,37 @@ impl Repo {
             (threshold as usize + MAX_CONTINUOUS_CONNECTOR_ROWS).min(raw_rows.len())
         };
         let publish_len = (threshold as usize).min(window_len);
-        let Some(entries) = self.materialize_graph_entries_guarded(
-            repo,
-            &raw_rows[..publish_len],
-            Some(guard),
-            true,
-        )?
-        else {
-            return Ok(false);
-        };
+        if materialized.len() < publish_len {
+            let Some(delta) = self.materialize_graph_entries_guarded(
+                repo,
+                &raw_rows[materialized.len()..publish_len],
+                Some(guard),
+                true,
+            )?
+            else {
+                return Ok(false);
+            };
+            materialized.extend(delta);
+        }
         if guard.is_canceled() {
             return Ok(false);
         }
-        let mut layout_inputs = entries.iter().map(DagLayoutInput::from).collect::<Vec<_>>();
-        let lookahead = &raw_rows[publish_len..window_len];
-        if !lookahead.is_empty() {
-            let lookahead_ids = lookahead
-                .iter()
-                .map(|(commit, _)| commit.id().hex())
-                .collect::<HashSet<_>>();
-            let refs = CommitRefIndex::build(repo, self.workspace_name.as_ref(), &lookahead_ids);
-            layout_inputs.extend(lookahead.iter().map(|(commit, edges)| {
-                let commit_id = commit.id().hex();
-                DagLayoutInput {
-                    parents: commit.parent_ids().iter().map(|id| id.hex()).collect(),
-                    is_working_copy: refs.is_working_copy(&commit_id),
-                    has_ref: refs.has_layout_ref(&commit_id),
-                    commit_id,
-                    edges: edges.clone(),
-                }
-            }));
-        }
+        let window_ids = raw_rows[..window_len]
+            .iter()
+            .map(|(commit, _)| commit.id().hex())
+            .collect::<HashSet<_>>();
+        let refs = CommitRefIndex::build(repo, self.workspace_name.as_ref(), &window_ids);
+        let layout_inputs = raw_rows[..window_len]
+            .iter()
+            .map(|(commit, edges)| raw_layout_input(commit, edges, &refs))
+            .collect::<Vec<_>>();
         let layout = DagLayout::compute_inputs(&layout_inputs);
         if guard.is_canceled() {
             return Ok(false);
         }
         let rows = layout.rows[..publish_len].to_vec();
         on_event(LogGraphEvent::Snapshot(LogGraphSnapshot {
-            entries,
+            entries: materialized[..publish_len].to_vec(),
             layout: DagLayout {
                 rows,
                 logical_column_count: layout.logical_column_count,
