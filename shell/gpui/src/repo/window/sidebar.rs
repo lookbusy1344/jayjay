@@ -126,9 +126,12 @@ pub(super) fn sidebar(
                                     view.drop_dag_drag_on_change(drag, destination, cx);
                                 });
                             });
-                        let dag_col = entries
-                            .get(ix)
-                            .map(|entry| dag_column(entry, &dag_layout, &dag_geometry, &t));
+                        let dag_col = entries.get(ix).and_then(|entry| {
+                            dag_layout
+                                .rows
+                                .get(ix)
+                                .map(|row| dag_column(entry, row, &dag_geometry, &t))
+                        });
                         dag_row(
                             DagRow {
                                 change: &changes_for_processor[ix],

@@ -6,7 +6,8 @@ mod style;
 use gpui::{AnyElement, ContentMask, IntoElement, Pixels, Styled, canvas, point, px};
 use jayjay_core::GraphEntry;
 use jayjay_core::dag::{
-    DagContinuation, DagContinuationDirection, DagEdgeKind, DagLayout, DagLinkCell, DagVerticalCell,
+    DagContinuation, DagContinuationDirection, DagEdgeKind, DagLinkCell, DagRowShape,
+    DagVerticalCell,
 };
 
 use crate::app::theme::Theme;
@@ -198,21 +199,18 @@ fn link_top(column: u32, node_column: u32, node_y: Pixels, node_radius: Pixels) 
 
 pub(super) fn dag_column(
     entry: &GraphEntry,
-    layout: &DagLayout,
+    row: &DagRowShape,
     geometry: &DagGeometry,
     theme: &Theme,
 ) -> AnyElement {
+    debug_assert_eq!(
+        row.commit_id, entry.change.commit_id.id,
+        "DAG row shape does not correspond to its entry; row index and entry index diverged"
+    );
     let style = DagNodeStyle::resolve(&entry.change, theme, geometry.node_radius);
     let line_color = theme.dag_line;
     let edge_color = theme.dag_edge;
 
-    let Some(row) = layout.row(&entry.change.commit_id) else {
-        return canvas(|_, _, _| (), |_, _, _, _| {})
-            .flex_none()
-            .w(px(geometry.graph_width))
-            .h_full()
-            .into_any_element();
-    };
     let node_column = row.node_column;
     let incoming = row.incoming;
     let node_line = row.node_line.clone();
