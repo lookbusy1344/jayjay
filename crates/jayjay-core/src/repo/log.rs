@@ -231,9 +231,15 @@ impl Repo {
         on_event: &mut impl FnMut(LogGraphEvent),
     ) -> CoreResult<()> {
         let repo = self.get_repo();
-        let expression = self.parse_revset_str(&repo, &request.revset)?;
-        let revset_result = self.evaluate_typed_revset(&repo, expression.clone())?;
-        let prioritized_ids = self.log_graph_prioritized_ids(&repo, &expression)?;
+        let (revset_result, prioritized_ids) = {
+            let span = tracing::debug_span!("log_graph.revset_evaluation");
+            let _entered = span.enter();
+            let expression = self.parse_revset_str(&repo, &request.revset)?;
+            (
+                self.evaluate_typed_revset(&repo, expression.clone())?,
+                self.log_graph_prioritized_ids(&repo, &expression)?,
+            )
+        };
 
         let mut topo_order =
             TopoGroupedGraph::new(revset_result.stream_graph(), |id: &CommitId| id);
@@ -391,8 +397,11 @@ impl Repo {
                 .iter()
                 .map(|(commit, _)| commit.id().hex())
                 .collect::<HashSet<_>>();
-            let divergent_change_ids =
-                Self::repository_divergent_change_ids(repo, rows.iter().map(|(commit, _)| commit))?;
+            let divergent_change_ids = {
+                let span = tracing::debug_span!("log_graph.divergence");
+                let _entered = span.enter();
+                Self::repository_divergent_change_ids(repo, rows.iter().map(|(commit, _)| commit))?
+            };
             let ref_index_started = Instant::now();
             let ref_index = {
                 let span = tracing::debug_span!("log_graph.ref_index");
