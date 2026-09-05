@@ -87,17 +87,15 @@ extension RepoViewModel {
             return (
                 detail,
                 StatusBarSnapshot.load(from: $0),
-                graphEntries,
-                DAGLayout(entries: graphEntries)
+                graphEntries
             )
         } onSuccess: { viewModel, result in
-            let (detail, statusBar, graphEntries, dagLayout) = result
+            let (detail, statusBar, graphEntries) = result
             viewModel.successActionSignal += 1
             viewModel.applySingleSelectedChange(detail)
             viewModel.apply(statusBar)
             // Patch the @ row in place (no descendants → edges unchanged) instead of a full log rebuild.
             viewModel.graphEntries = graphEntries
-            viewModel.dagLayout = dagLayout
         }
     }
 

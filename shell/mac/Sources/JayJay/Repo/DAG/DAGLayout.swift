@@ -17,16 +17,14 @@ struct DAGLayout: Sendable {
     let logicalColumnCount: Int
     private let rowsByCommitId: [String: DagRowShape]
 
-    init(entries: [GraphEntry]) {
-        self.init(computed: computeDagLayout(entries: entries))
-    }
-
     /// Wraps a layout computed by the Rust renderer.
     init(computed layout: JayJayCore.DagLayout) {
         rows = layout.rows
         logicalColumnCount = max(1, Int(layout.logicalColumnCount))
         rowsByCommitId = Dictionary(rows.map { ($0.commitId, $0) }, uniquingKeysWith: { first, _ in first })
     }
+
+    static let empty = DAGLayout(computed: .init(rows: [], logicalColumnCount: 1))
 
     func row(for commitId: String) -> DagRowShape? {
         rowsByCommitId[commitId]

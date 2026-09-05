@@ -7,7 +7,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
 
     let repoPath: String
     var graphEntries: [GraphEntry] = []
-    var dagLayout = DAGLayout(entries: [])
+    var dagLayout = DAGLayout.empty
     var changes: [ChangeInfo] {
         graphEntries.map(\.change)
     }
@@ -65,6 +65,20 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     var configWarning: String?
     private var fsWatcher: RepoFSWatcher?
     var refreshTask: Task<Void, Never>?
+    @ObservationIgnored var graphLoadToken: JayJayGraphLoadToken?
+    @ObservationIgnored var graphRefreshGeneration: UInt64 = 0
+    @ObservationIgnored var graphFirstSnapshotApplied = false
+    @ObservationIgnored var graphPendingSelectedChange: ChangeDetail?
+    var graphPaused = false
+    var graphLoadCanceling = false
+    var graphRowCeiling: UInt32 = 0
+    var graphLoadActionLabel: String {
+        if graphLoadCanceling {
+            return "Cancelling…"
+        }
+        return isRefreshingInFlight ? "Cancel Update" : "Refresh"
+    }
+
     /// A superseded refresh stays registered: cancellation cannot interrupt synchronous FFI.
     var repoTasks: [UUID: Task<Void, Never>] = [:]
     var isShuttingDown = false
@@ -127,6 +141,8 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     func beginShutdown() {
         guard !isShuttingDown else { return }
         isShuttingDown = true
+        graphLoadToken?.cancel()
+        graphLoadToken = nil
         repoTasks.values.forEach { $0.cancel() }
         refreshTask = nil
         prFetchTask = nil

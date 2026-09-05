@@ -24,9 +24,12 @@ extension RepoContentView {
     private var viewPaletteItems: [CommandPaletteItem] {
         var items: [CommandPaletteItem] = []
         items.append(CommandPaletteItem(
-            title: "Refresh", icon: "arrow.triangle.2.circlepath", category: "View", shortcut: "⌘R"
+            title: viewModel.graphLoadActionLabel,
+            icon: "arrow.triangle.2.circlepath",
+            category: "View",
+            shortcut: "⌘R"
         ) {
-            viewModel.refresh()
+            viewModel.refreshOrCancel()
         })
         items.append(CommandPaletteItem(
             title: "Toggle Side-by-Side Diff",

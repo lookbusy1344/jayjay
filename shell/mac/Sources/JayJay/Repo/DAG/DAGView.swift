@@ -25,6 +25,7 @@ struct DAGView: View {
     var onCreateBookmark: ((String) -> Void)?
     var onCreateStackedPRs: ((String) -> Void)?
     var onLoadMore: (() -> Void)?
+    var loadMoreLabel = "Load More"
 
     @State private var contextTargetId: String?
     @State private var sidebarWidth: CGFloat = 0
@@ -62,7 +63,8 @@ struct DAGView: View {
         onSquashSelection: (([String]) -> Void)? = nil,
         onCreateBookmark: ((String) -> Void)? = nil,
         onCreateStackedPRs: ((String) -> Void)? = nil,
-        onLoadMore: (() -> Void)? = nil
+        onLoadMore: (() -> Void)? = nil,
+        loadMoreLabel: String = "Load More"
     ) {
         self.entries = entries
         self.layout = layout
@@ -86,6 +88,7 @@ struct DAGView: View {
         self.onCreateBookmark = onCreateBookmark
         self.onCreateStackedPRs = onCreateStackedPRs
         self.onLoadMore = onLoadMore
+        self.loadMoreLabel = loadMoreLabel
     }
 
     var body: some View {
@@ -168,7 +171,7 @@ struct DAGView: View {
                                 } label: {
                                     HStack {
                                         Spacer()
-                                        Label("Load More", systemImage: "arrow.down.circle")
+                                        Label(loadMoreLabel, systemImage: "arrow.down.circle")
                                             .jayjayFont(12, weight: .medium)
                                             .foregroundStyle(.secondary)
                                         Spacer()

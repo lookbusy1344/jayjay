@@ -16,11 +16,14 @@ extension RepoContentView {
                 Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
             }
             .help("Filter by revset")
-            Button { viewModel.refresh() } label: {
-                RefreshSpinner(animating: viewModel.isRefreshingInFlight)
+            Button { viewModel.refreshOrCancel() } label: {
+                RefreshSpinner(
+                    animating: viewModel.isRefreshingInFlight,
+                    label: viewModel.graphLoadActionLabel
+                )
             }
             .keyboardShortcut("r")
-            .help("Refresh (⌘R)")
+            .help("(viewModel.graphLoadActionLabel) (⌘R)")
             syncButton(
                 .pull,
                 inFlight: viewModel.isPullingInFlight,

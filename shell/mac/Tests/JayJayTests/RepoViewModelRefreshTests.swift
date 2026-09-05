@@ -5,6 +5,122 @@ import XCTest
 
 @MainActor
 final class RepoViewModelRefreshTests: RepoViewModelTestCase {
+    func testObserverAppliesSnapshotsOnMainActorUsingCoreLayout() async throws {
+        let viewModel = try XCTUnwrap(viewModel)
+        let entries = try viewModel.repo.logGraph(revset: "all()")
+        let coreLayout = JayJayCore.DagLayout(rows: [], logicalColumnCount: 7)
+        let firstSnapshot = LogGraphSnapshot(
+            entries: [],
+            layout: .init(rows: [], logicalColumnCount: 3),
+            loadedRows: 0,
+            isComplete: false
+        )
+        let finalSnapshot = LogGraphSnapshot(
+            entries: entries,
+            layout: coreLayout,
+            loadedRows: UInt32(entries.count),
+            isComplete: true
+        )
+        let applied = expectation(description: "snapshot applied")
+        applied.expectedFulfillmentCount = 2
+        let observer = MainActorLogGraphObserver { event in
+            MainActor.preconditionIsolated()
+            guard case let .snapshot(received) = event else { return }
+            viewModel.applyGraphSnapshot(received, preferredCommitId: nil, preferredRev: nil)
+            applied.fulfill()
+        }
+
+        await Task.detached {
+            observer.onEvent(event: .snapshot(snapshot: firstSnapshot))
+            observer.onEvent(event: .snapshot(snapshot: finalSnapshot))
+        }.value
+        await fulfillment(of: [applied], timeout: 1)
+
+        XCTAssertEqual(viewModel.graphEntries, entries)
+        XCTAssertEqual(viewModel.dagLayout.logicalColumnCount, 7)
+        XCTAssertTrue(viewModel.dagLayout.rows.isEmpty)
+    }
+
+    func testFirstSnapshotRestoresSelectionByCommitIdAndLaterSnapshotKeepsIt() throws {
+        let viewModel = try XCTUnwrap(viewModel)
+        let entries = try viewModel.repo.logGraph(revset: "all()")
+        let selected = try XCTUnwrap(entries.last)
+        viewModel.selectedChangeId = selected.change.selectionRevision
+
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: entries, isComplete: false),
+            preferredCommitId: selected.change.commitId.id,
+            preferredRev: selected.change.selectionRevision
+        )
+        XCTAssertEqual(viewModel.selectedChangeId, selected.change.selectionRevision)
+
+        let selectionAfterFirstSnapshot = viewModel.selectedChangeId
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: entries, isComplete: true),
+            preferredCommitId: entries[0].change.commitId.id,
+            preferredRev: entries[0].change.selectionRevision
+        )
+        XCTAssertEqual(viewModel.selectedChangeId, selectionAfterFirstSnapshot)
+    }
+
+    func testCancelingRefreshTaskLatchesCoreGraphToken() async throws {
+        let repo = BlockingGraphRepo()
+        let viewModel = RepoViewModel(
+            path: "/tmp",
+            repo: repo,
+            workingCopyIsLarge: false,
+            configWarning: nil
+        )
+
+        viewModel.refresh(snapshotWorkingCopy: false)
+        try await waitUntil("the graph session starts") { repo.hasStarted }
+        let token = try XCTUnwrap(viewModel.graphLoadToken)
+
+        viewModel.refreshTask?.cancel()
+        try await waitUntil("the core token is canceled") { token.isCanceled() }
+        repo.finish()
+    }
+
+    func testStartingNewRefreshCancelsPreviousCoreGraphToken() async throws {
+        let repo = BlockingGraphRepo()
+        let viewModel = RepoViewModel(
+            path: "/tmp",
+            repo: repo,
+            workingCopyIsLarge: false,
+            configWarning: nil
+        )
+
+        viewModel.refresh(snapshotWorkingCopy: false)
+        try await waitUntil("the first graph session starts") { repo.requestCount == 1 }
+        let firstToken = try XCTUnwrap(viewModel.graphLoadToken)
+
+        viewModel.refresh(snapshotWorkingCopy: false)
+        XCTAssertTrue(firstToken.isCanceled())
+
+        repo.finish(count: 2)
+    }
+
+    func testPausedSessionLoadsAncillaryDataOnceAndContinuesWithHigherCeiling() async throws {
+        let repo = BlockingGraphRepo(events: [.paused])
+        let viewModel = RepoViewModel(
+            path: "/tmp",
+            repo: repo,
+            workingCopyIsLarge: false,
+            configWarning: nil
+        )
+
+        viewModel.refresh(snapshotWorkingCopy: false)
+        try await waitUntil("the graph session pauses") { viewModel.graphPaused }
+        let initialRequest = try XCTUnwrap(repo.requests.first)
+        XCTAssertEqual(repo.ancillaryLoadCount, 1)
+
+        viewModel.continueLoading()
+        try await waitUntil("the continued graph session pauses") { repo.requestCount == 2 && viewModel.graphPaused }
+
+        XCTAssertEqual(repo.requests[1].rowCeiling, initialRequest.rowCeiling * 2)
+        XCTAssertEqual(repo.ancillaryLoadCount, 2)
+    }
+
     func testRefreshAppliesGraphEntriesAndTheirLayoutTogether() async throws {
         let viewModel = try XCTUnwrap(viewModel)
 
@@ -76,6 +192,15 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
         XCTAssertFalse(viewModel.workspaceVanished)
         XCTAssertEqual(viewModel.error, "newer refresh")
     }
+
+    private func snapshot(entries: [GraphEntry], isComplete: Bool) -> LogGraphSnapshot {
+        LogGraphSnapshot(
+            entries: entries,
+            layout: computeDagLayout(entries: entries),
+            loadedRows: UInt32(entries.count),
+            isComplete: isComplete
+        )
+    }
 }
 
 private enum TestRefreshError: Error {
@@ -103,5 +228,84 @@ private final class BlockingWorkspacePresenceProbe: @unchecked Sendable {
 
     func finish() {
         release.signal()
+    }
+}
+
+private final class BlockingGraphRepo: JayJayRepo, @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private let events: [LogGraphEvent]?
+    private var recordedRequests: [LogGraphRequest] = []
+    private var recordedAncillaryLoadCount = 0
+
+    init(events: [LogGraphEvent]? = nil) {
+        self.events = events
+        super.init(noHandle: .init())
+    }
+
+    required init(unsafeFromHandle handle: UInt64) {
+        events = nil
+        super.init(unsafeFromHandle: handle)
+    }
+
+    var hasStarted: Bool {
+        requestCount > 0
+    }
+
+    var requestCount: Int {
+        lock.withLock { recordedRequests.count }
+    }
+
+    var requests: [LogGraphRequest] {
+        lock.withLock { recordedRequests }
+    }
+
+    var ancillaryLoadCount: Int {
+        lock.withLock { recordedAncillaryLoadCount }
+    }
+
+    override func refreshWorkingCopy() throws {}
+    override func listBookmarks() throws -> [BookmarkInfo] {
+        lock.withLock { recordedAncillaryLoadCount += 1 }
+        return []
+    }
+
+    override func workspaceList() throws -> [WorkspaceInfo] {
+        []
+    }
+
+    override func prHostName() -> String? {
+        nil
+    }
+
+    override func diffStats(rev: String) throws -> DiffStats {
+        DiffStats(filesChanged: 0, insertions: 0, deletions: 0)
+    }
+
+    override func currentOperationDescription() -> String {
+        ""
+    }
+
+    override func showSummary(rev: String) throws -> ChangeDetail {
+        throw TestRefreshError.failed
+    }
+
+    override func startLogGraph(
+        request: LogGraphRequest,
+        token _: JayJayGraphLoadToken,
+        observer: LogGraphObserver
+    ) {
+        lock.withLock { recordedRequests.append(request) }
+        if let events {
+            events.forEach { observer.onEvent(event: $0) }
+            return
+        }
+        release.wait()
+    }
+
+    func finish(count: Int = 1) {
+        for _ in 0 ..< count {
+            release.signal()
+        }
     }
 }

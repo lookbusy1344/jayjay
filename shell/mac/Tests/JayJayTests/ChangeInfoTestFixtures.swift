@@ -1,4 +1,11 @@
+@testable import JayJay
 import JayJayCore
+
+extension DAGLayout {
+    init(entries: [GraphEntry]) {
+        self.init(computed: computeDagLayout(entries: entries))
+    }
+}
 
 func mockChangeInfo(
     changeId: String = "c-1",
