@@ -116,11 +116,10 @@ struct DAGView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(entries.enumerated()), id: \.element.change.commitId) { index, entry in
+                            ForEach(entries, id: \.change.commitId) { entry in
                                 let rowId = entry.change.selectionRevision
                                 let rowViewModel = viewModel.rowViewModel(
                                     for: entry,
-                                    index: index,
                                     rebasePreviewText: rebasePreviewText(for: entry.change),
                                     bookmarkPreviewText: bookmarkPreviewText(for: entry.change)
                                 )
@@ -196,7 +195,7 @@ struct DAGView: View {
                     .overlay(alignment: .topLeading) { rebaseDragOverlay }
                     .overlay(alignment: .topLeading) { bookmarkDragOverlay }
                     .onPreferenceChange(DAGRebaseRowFramePreferenceKey.self) { rebaseRowFrames = $0 }
-                    .onChange(of: entries.map(\.change.commitId)) { _, _ in
+                    .onChange(of: entriesIdentity) { _, _ in
                         if viewModel.shouldCancelRebaseDrag(for: rebaseDrag?.hoveredCommitId) {
                             cancelRebaseDrag()
                         }
@@ -225,6 +224,21 @@ struct DAGView: View {
             .allowsHitTesting(false)
         )
         .background(sidebarWidthReader)
+    }
+
+    /// O(1) stand-in for the entries list, so drag-cancelling `onChange` never rebuilds an array of every commit id on each body pass. Head and tail cover the refresh outcomes that move drop targets: a new `@` at the top, or trimmed history at the bottom.
+    private var entriesIdentity: EntriesIdentity {
+        EntriesIdentity(
+            count: entries.count,
+            first: entries.first?.change.commitId.id,
+            last: entries.last?.change.commitId.id
+        )
+    }
+
+    private struct EntriesIdentity: Equatable {
+        let count: Int
+        let first: String?
+        let last: String?
     }
 
     /// One `DAGGeometry` is shared by every row, so it must come from the whole view's width, not a per-row measurement — otherwise rows could disagree on lane pitch.

@@ -137,7 +137,6 @@ struct DAGViewModel {
 
     func rowViewModel(
         for entry: GraphEntry,
-        index: Int,
         rebasePreviewText: String?,
         bookmarkPreviewText: String?
     ) -> DAGRowViewModel {
@@ -145,7 +144,6 @@ struct DAGViewModel {
             entry: entry,
             layout: layout,
             geometry: geometry,
-            index: index,
             selectedId: selectedId,
             selectedIds: selectedIds,
             compareFromId: compareFromId,

@@ -39,7 +39,6 @@ struct DAGRowViewModel {
     let entry: GraphEntry
     let layout: DAGLayout
     let geometry: DAGGeometry
-    let index: Int
     let colorScheme: ColorScheme
     let selectionAccent: DAGRowSelectionAccent?
     let rebaseState: DAGRowRebaseState
@@ -53,7 +52,6 @@ struct DAGRowViewModel {
         entry: GraphEntry,
         layout: DAGLayout,
         geometry: DAGGeometry,
-        index: Int,
         selectedId: String?,
         selectedIds: [String] = [],
         compareFromId: String?,
@@ -67,7 +65,6 @@ struct DAGRowViewModel {
         self.entry = entry
         self.layout = layout
         self.geometry = geometry
-        self.index = index
         self.colorScheme = colorScheme
 
         let rowId = entry.change.selectionRevision
