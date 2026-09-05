@@ -14,6 +14,37 @@ struct DAGViewModel {
     let bookmarkDrag: BookmarkDragState?
     let colorScheme: ColorScheme
     let layout: DAGLayout
+    private let parentIdsByCommitId: [String: [String]]
+
+    init(
+        entries: [GraphEntry],
+        selectedId: String?,
+        selectedIds: [String],
+        compareFromId: String?,
+        contextTargetId: String?,
+        rebaseDrag: DAGRebaseDragState?,
+        bookmarkDrag: BookmarkDragState?,
+        colorScheme: ColorScheme,
+        layout: DAGLayout
+    ) {
+        self.entries = entries
+        self.selectedId = selectedId
+        self.selectedIds = selectedIds
+        self.compareFromId = compareFromId
+        self.contextTargetId = contextTargetId
+        self.rebaseDrag = rebaseDrag
+        self.bookmarkDrag = bookmarkDrag
+        self.colorScheme = colorScheme
+        self.layout = layout
+        parentIdsByCommitId = Dictionary(
+            uniqueKeysWithValues: entries.map { entry in
+                (
+                    entry.change.commitId.id,
+                    entry.edges.filter { $0.edgeType != .missing }.map(\.target)
+                )
+            }
+        )
+    }
 
     var isEmpty: Bool {
         entries.isEmpty
@@ -103,17 +134,6 @@ struct DAGViewModel {
         selectedChanges.count == selectedIds.count
             && selectedChanges.count > 1
             && selectedChanges.allSatisfy { !$0.isImmutable }
-    }
-
-    private var parentIdsByCommitId: [String: [String]] {
-        Dictionary(
-            uniqueKeysWithValues: entries.map { entry in
-                (
-                    entry.change.commitId.id,
-                    entry.edges.filter { $0.edgeType != .missing }.map(\.target)
-                )
-            }
-        )
     }
 
     private func hasSelectedAncestor(
