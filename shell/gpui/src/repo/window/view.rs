@@ -298,14 +298,32 @@ pub(crate) const PREVIEW_MIN: f32 = 420.;
 
 impl RepoWindow {
     pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let eager_test_open = crate::app::fs_watcher::is_watcher_suppressed(cx);
+        Self::new_internal(path, eager_test_open, cx)
+    }
+
+    /// Opens through the production asynchronous path, including in component-test apps that
+    /// suppress the filesystem watcher.
+    pub fn new_async(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self::new_internal(path, false, cx)
+    }
+
+    fn new_internal(path: PathBuf, eager_test_open: bool, cx: &mut Context<Self>) -> Self {
         // Open off the main thread (`Repo::open` + initial revset eval are slow on large repos); render a loading pane until it lands.
         let vm_path = path.clone();
+        // Component fixtures suppress the watcher and use the eager view model so they do not depend on a real worker thread to open a repository.
         let vm = cx.new(|cx| {
+            if eager_test_open {
+                return RepoViewModel::new(vm_path);
+            }
             let mut vm = RepoViewModel::opening(vm_path);
             vm.open_async(cx);
             vm
         });
         let mut view = Self::for_vm(vm, cx);
+        if eager_test_open {
+            view.vm.update(cx, |vm, cx| vm.boot(cx));
+        }
         // Real AI-CLI detection may spawn a login shell to resolve PATH; keep it out of the deterministic test scheduler (tests inject a mock provider explicitly), same reason the fs watcher is suppressed.
         if !crate::app::fs_watcher::is_watcher_suppressed(cx) {
             view.redetect_commit_ai_provider(cx);

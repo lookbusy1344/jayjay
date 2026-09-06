@@ -43,7 +43,14 @@ impl Render for RepoWindow {
         self.sync_review_notes(cx);
         let t = crate::app::theme::theme_for_window(window, cx).clone();
         let (_, file_column_width) = self.layout.fitted(f32::from(window.viewport_size().width));
-        let (toolbar_repo, bookmarks, workspaces, is_refreshing, refresh_mode) = {
+        let (
+            toolbar_repo,
+            bookmarks,
+            workspaces,
+            is_refreshing,
+            is_canceling_refresh,
+            refresh_mode,
+        ) = {
             let vm = self.vm.read(cx);
             let bookmarks = vm.graph.bookmarks.clone();
             let workspaces = vm.graph.workspaces.clone();
@@ -60,6 +67,7 @@ impl Render for RepoWindow {
                 bookmarks,
                 workspaces,
                 vm.loading.refresh_indicator,
+                vm.loading.graph_session_canceling,
                 vm.refresh_mode(),
             )
         };
@@ -224,6 +232,7 @@ impl Render for RepoWindow {
                 ToolbarActivity {
                     is_refreshing,
                     refresh: refresh_mode,
+                    is_canceling_refresh,
                     is_fetching,
                     is_pushing,
                 },

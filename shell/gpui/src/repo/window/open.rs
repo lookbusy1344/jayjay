@@ -57,7 +57,7 @@ impl RepoWindow {
                         .detach();
                     cx.observe_global::<StoreHandle>(|_, cx| cx.notify())
                         .detach();
-                    let mut view = Self::new(path, cx);
+                    let mut view = Self::new_async(path, cx);
                     view.boot(cx);
                     view
                 })
