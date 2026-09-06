@@ -38,6 +38,12 @@ enum AppColors {
     private static func repo(_ scheme: ColorScheme) -> RepoColors {
         scheme == .dark ? darkRepoColors : lightRepoColors
     }
+
+    /// The DAG "lanes continue off-screen" chevron. A soft blue that stays distinct from the neutral
+    /// graph strokes and reads clearly over both plain and selection-tinted rows.
+    static func dagOverflowMarker(_ scheme: ColorScheme) -> Color {
+        Color(rgb: scheme == .dark ? 0x93B8F5 : 0x3F7AD6)
+    }
 }
 
 private extension Color {
