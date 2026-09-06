@@ -125,5 +125,8 @@ impl RepoViewModel {
 impl Drop for RepoViewModel {
     fn drop(&mut self) {
         self.stop_bisect_for_shutdown();
+        if let Some(token) = &self.loading.graph_session {
+            token.cancel();
+        }
     }
 }
