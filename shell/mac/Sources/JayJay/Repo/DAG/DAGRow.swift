@@ -20,16 +20,9 @@ extension BisectVerdict {
     }
 }
 
-private struct DAGRefsRowBoundsPreferenceKey: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
-    }
-}
-
 struct DAGRow: View {
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var contrast
     @Environment(\.jayjayTypography) var typography
     let viewModel: DAGRowViewModel
     var actions: (any DAGActions & BookmarkActions & TagActions)?
@@ -44,7 +37,7 @@ struct DAGRow: View {
     var onBookmarkDragEnded: ((String, DragGesture.Value) -> Void)?
     @State private var isContextTarget = false
 
-    /// Non-private: read by the DAGRow+Refs extension.
+    /// Non-private: read by the DAGRow+GraphColumn / +Refs extensions.
     var change: ChangeInfo {
         viewModel.change
     }
@@ -57,63 +50,65 @@ struct DAGRow: View {
             .onHover { isContextTarget = $0 }
     }
 
-    private func summaryColumn(_ viewModel: DAGRowViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            refsRow
-                .lineLimit(1)
-                .anchorPreference(key: DAGRefsRowBoundsPreferenceKey.self, value: .bounds) { $0 }
+    /// The band labels sit in their own unpadded strip so they line up with the bands the graph
+    /// column paints in the row's bottom `bandCount * dagElisionBandHeight`.
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
+                refsRow
+                    .lineLimit(1)
 
-            HStack(spacing: 6) {
-                if let badge = viewModel.bisectBadge {
-                    Text(badge.label)
-                        .jayjayFont(10, weight: .semibold)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(badge.tint, in: Capsule())
+                HStack(spacing: 6) {
+                    if let badge = viewModel.bisectBadge {
+                        Text(badge.label)
+                            .jayjayFont(10, weight: .semibold)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(badge.tint, in: Capsule())
+                    }
+                    if let descriptionLine = viewModel.descriptionLine {
+                        Text(descriptionLine)
+                            .jayjayFont(13, weight: .medium).lineLimit(2)
+                            .help(change.description)
+                    } else {
+                        Text(Localized.Repo.noDescriptionPlaceholder).jayjayFont(13).foregroundStyle(.tertiary)
+                    }
                 }
-                if let descriptionLine = viewModel.descriptionLine {
-                    Text(descriptionLine)
-                        .jayjayFont(13, weight: .medium).lineLimit(2)
-                        .help(change.description)
-                } else {
-                    Text(Localized.Repo.noDescriptionPlaceholder).jayjayFont(13).foregroundStyle(.tertiary)
-                }
-            }
 
-            HStack(spacing: 6) {
-                Text(change.commitId.highlighted(
-                    scheme: colorScheme,
-                    font: typography.identifierFont,
-                    prefixColor: AppColors.commitIdPrefix(colorScheme)
-                ))
-                .fixedSize(horizontal: true, vertical: false)
-                .help(Localized.Repo.commitNamed(id: change.commitId.id))
-                .accessibilityLabel(Localized.Repo.commitLabel(id: change.commitId.compact))
-                CommitAvatar(email: change.author.email, size: 14)
-                Text(change.author.name)
-                Text(Date.relativeLabel(millis: change.committedAtMillis)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(change.commitId.highlighted(
+                        scheme: colorScheme,
+                        font: typography.identifierFont,
+                        prefixColor: AppColors.commitIdPrefix(colorScheme)
+                    ))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help(Localized.Repo.commitNamed(id: change.commitId.id))
+                    .accessibilityLabel(Localized.Repo.commitLabel(id: change.commitId.compact))
+                    CommitAvatar(email: change.author.email, size: 14)
+                    Text(change.author.name)
+                    Text(Date.relativeLabel(millis: change.committedAtMillis)).foregroundStyle(.secondary)
+                }
+                .jayjayFont(11).lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary)
             }
-            .jayjayFont(11).lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary)
+            .padding(.vertical, dagRowVerticalPadding)
+
+            ForEach(Array(viewModel.elisionBands.enumerated()), id: \.offset) { _, _ in
+                Text(Localized.Repo.elidedRevisionsPlaceholder)
+                    .jayjayFont(10)
+                    .foregroundStyle(.tertiary)
+                    .frame(height: dagElisionBandHeight, alignment: .leading)
+            }
         }
-        .padding(.vertical, dagRowVerticalPadding)
-        .padding(.trailing, 10)
     }
 
     private func rowBody(_ viewModel: DAGRowViewModel) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            Color.clear.frame(width: viewModel.graphWidth)
-            summaryColumn(viewModel)
-            Spacer(minLength: 0)
-        }
-        .overlayPreferenceValue(DAGRefsRowBoundsPreferenceKey.self) { refsRowBounds in
-            GeometryReader { geo in
-                DAGGraphColumn(
-                    viewModel: viewModel,
-                    nodeCenterY: refsRowBounds.map { geo[$0].midY } ?? dagFallbackNodeCenterY
-                )
+            graphColumn
                 .frame(width: viewModel.graphWidth)
-            }
-            .allowsHitTesting(false)
+
+            textColumn
+                .padding(.trailing, 10)
+            Spacer(minLength: 0)
         }
         .padding(.leading, dagRowLeadingPadding)
         .background(viewModel.rowBackground)

@@ -26,9 +26,12 @@ extension RepoContentView {
     private var viewPaletteItems: [CommandPaletteItem] {
         var items: [CommandPaletteItem] = []
         items.append(CommandPaletteItem(
-            title: Localized.Repo.refresh, icon: "arrow.triangle.2.circlepath", category: Localized.Menu.view, shortcut: AppShortcut.refresh.symbol
+            title: viewModel.graphLoadActionLabel,
+            icon: "arrow.triangle.2.circlepath",
+            category: Localized.Menu.view,
+            shortcut: AppShortcut.refresh.symbol
         ) {
-            viewModel.refresh()
+            viewModel.refreshOrCancel()
         })
         items.append(CommandPaletteItem(
             title: Localized.Palette.bisectEllipsis,
