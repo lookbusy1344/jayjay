@@ -1,10 +1,9 @@
 import JayJayCore
 import SwiftUI
 
-@MainActor
 struct DAGViewModel {
-    nonisolated private static let downArrowKeyCode: UInt16 = 125
-    nonisolated private static let upArrowKeyCode: UInt16 = 126
+    private static let downArrowKeyCode: UInt16 = 125
+    private static let upArrowKeyCode: UInt16 = 126
 
     let entries: [GraphEntry]
     let selectedId: String?
@@ -17,9 +16,77 @@ struct DAGViewModel {
     let capabilities: DAGSelectionCapabilities
     var isActivePane = true
     var bisect: BisectDAGState?
-    var selectionGraph: DagSelectionGraph?
-    var laneEndBlink = false
-    private let cache = Cache()
+    let geometry: DAGGeometry
+    let selectionGraph: DagSelectionGraph?
+    let activeLane: DagLaneSpan?
+    let laneEndBlink: Bool
+
+    // Derived state built once per view model, not per row. macOS SwiftUI evaluates each row's
+    // `.contextMenu` content eagerly on every body update, so any O(entries) work these lookups back
+    // would otherwise run per visible row — quadratic on a large graph.
+    private let changeByRevision: [String: ChangeInfo]
+    private let selectedChanges: [ChangeInfo]
+
+    init(
+        entries: [GraphEntry],
+        selectedId: String?,
+        selectedIds: [String],
+        compareFromId: String?,
+        rebaseDrag: DAGRebaseDragState?,
+        bookmarkDrag: BookmarkDragState?,
+        colorScheme: ColorScheme,
+        layout: DAGLayout,
+        capabilities: DAGSelectionCapabilities,
+        geometry: DAGGeometry,
+        isActivePane: Bool = true,
+        bisect: BisectDAGState? = nil,
+        selectionGraph: DagSelectionGraph? = nil,
+        laneEndBlink: Bool = false
+    ) {
+        self.entries = entries
+        self.selectedId = selectedId
+        self.selectedIds = selectedIds
+        self.compareFromId = compareFromId
+        self.rebaseDrag = rebaseDrag
+        self.bookmarkDrag = bookmarkDrag
+        self.colorScheme = colorScheme
+        self.layout = layout
+        self.capabilities = capabilities
+        self.geometry = geometry
+        self.isActivePane = isActivePane
+        self.bisect = bisect
+        self.selectionGraph = selectionGraph
+        self.laneEndBlink = laneEndBlink
+
+        // `matchesRevision` matches either id, so `change(for:)` becomes an O(1) lookup keyed by both,
+        // keeping the first entry for a key to mirror the previous `first(where:)` scan.
+        var lookup: [String: ChangeInfo] = [:]
+        lookup.reserveCapacity(entries.count * 2)
+        for entry in entries {
+            let change = entry.change
+            if lookup[change.commitId.id] == nil {
+                lookup[change.commitId.id] = change
+            }
+            if lookup[change.changeId.id] == nil {
+                lookup[change.changeId.id] = change
+            }
+        }
+        changeByRevision = lookup
+
+        let selectedIdSet = Set(selectedIds)
+        selectedChanges = entries.map(\.change).filter { change in
+            let revision = change.selectionRevision
+            return selectedIdSet.contains(revision) || (selectedIds.isEmpty && selectedId == revision)
+        }
+
+        activeLane = if selectedIds.count <= 1, let selectionGraph,
+                        let row = Self.rowIndex(of: selectedId, in: entries)
+        {
+            selectionGraph.laneSpan(row: UInt32(row))
+        } else {
+            nil
+        }
+    }
 
     var isEmpty: Bool {
         entries.isEmpty
@@ -65,39 +132,41 @@ struct DAGViewModel {
         capabilities.canMerge(with: target)
     }
 
-    private var selectedChanges: [ChangeInfo] {
-        if let changes = cache.selectedChanges {
-            return changes
-        }
-        let changes = entries.compactMap { isSelected($0.change) ? $0.change : nil }
-        cache.selectedChanges = changes
-        return changes
+    var canDiffSelection: Bool {
+        isContiguousLinearSelection && Self.rangeHasSingleParentBase(selectedChanges)
     }
 
-    var activeLane: DagLaneSpan? {
-        if let cached = cache.activeLane {
-            return cached
+    private var isContiguousLinearSelection: Bool {
+        let selectedEntries = entries.enumerated().filter { isSelected($0.element.change) }
+        guard let first = selectedEntries.first?.offset,
+              let last = selectedEntries.last?.offset,
+              selectedEntries.count == last - first + 1
+        else {
+            return false
         }
-        var span: DagLaneSpan?
-        if selectedIds.count <= 1, let selectionGraph, let selectedId,
-           let row = entries.firstIndex(where: { $0.change.selectionRevision == selectedId })
-        {
-            span = selectionGraph.laneSpan(row: UInt32(row))
+        return Self.formsConsecutiveLinearRange(selectedChanges)
+    }
+
+    static func formsConsecutiveLinearRange(_ changes: [ChangeInfo]) -> Bool {
+        changes.count > 1 && zip(changes, changes.dropFirst()).allSatisfy { newer, older in
+            newer.parents == [older.commitId.id]
         }
-        cache.activeLane = .some(span)
-        return span
+    }
+
+    /// The combined diff bases on the oldest change's single parent; squashing the same range into a merge commit is still legal.
+    static func rangeHasSingleParentBase(_ changes: [ChangeInfo]) -> Bool {
+        changes.last?.parents.count == 1
     }
 
     func rowViewModel(
         for entry: GraphEntry,
-        index: Int,
         rebasePreviewText: String?,
         bookmarkPreviewText: String?
     ) -> DAGRowViewModel {
         DAGRowViewModel(
             entry: entry,
             layout: layout,
-            index: index,
+            geometry: geometry,
             selectedId: selectedId,
             selectedIds: selectedIds,
             compareFromId: compareFromId,
@@ -119,14 +188,29 @@ struct DAGViewModel {
     }
 
     func selectedChangeId(afterMovingBy delta: Int) -> String? {
+        Self.selectedChangeId(in: entries, selectedId: selectedId, selectionGraph: selectionGraph, afterMovingBy: delta)
+    }
+
+    func selectedChangeId(acrossLanesRightward rightward: Bool) -> String? {
+        Self.selectedChangeId(
+            in: entries,
+            selectedId: selectedId,
+            selectedIds: selectedIds,
+            selectionGraph: selectionGraph,
+            acrossLanesRightward: rightward
+        )
+    }
+
+    /// Static so keyboard navigation resolves the next selection without building a whole view model
+    /// (and its per-view-model precompute) on every arrow press.
+    static func selectedChangeId(
+        in entries: [GraphEntry],
+        selectedId: String?,
+        selectionGraph: DagSelectionGraph?,
+        afterMovingBy delta: Int
+    ) -> String? {
         guard !entries.isEmpty else { return nil }
-        let currentIdx: Int = if let selectedId,
-                                 let idx = entries.firstIndex(where: { $0.change.selectionRevision == selectedId })
-        {
-            idx
-        } else {
-            delta > 0 ? -1 : entries.count
-        }
+        let currentIdx = rowIndex(of: selectedId, in: entries) ?? (delta > 0 ? -1 : entries.count)
         if let selectionGraph, entries.indices.contains(currentIdx) {
             let row = UInt32(currentIdx)
             let next = delta > 0 ? selectionGraph.laneParent(row: row) : selectionGraph.laneChild(row: row)
@@ -137,13 +221,22 @@ struct DAGViewModel {
         return entries[newIdx].change.selectionRevision
     }
 
-    func selectedChangeId(acrossLanesRightward rightward: Bool) -> String? {
-        guard selectedIds.count <= 1, let selectionGraph, let selectedId,
-              let idx = entries.firstIndex(where: { $0.change.selectionRevision == selectedId })
-        else { return nil }
+    static func selectedChangeId(
+        in entries: [GraphEntry],
+        selectedId: String?,
+        selectedIds: [String],
+        selectionGraph: DagSelectionGraph?,
+        acrossLanesRightward rightward: Bool
+    ) -> String? {
+        guard selectedIds.count <= 1, let selectionGraph, let idx = rowIndex(of: selectedId, in: entries) else { return nil }
         let row = UInt32(idx)
         let next = rightward ? selectionGraph.laneRight(row: row) : selectionGraph.laneLeft(row: row)
         return next.map { entries[Int($0)].change.selectionRevision }
+    }
+
+    private static func rowIndex(of selectedId: String?, in entries: [GraphEntry]) -> Int? {
+        guard let selectedId else { return nil }
+        return entries.firstIndex { $0.change.selectionRevision == selectedId }
     }
 
     func isSelected(_ change: ChangeInfo) -> Bool {
@@ -156,16 +249,7 @@ struct DAGViewModel {
     }
 
     func change(for changeId: String) -> ChangeInfo? {
-        if cache.changesByRevision == nil {
-            var changes: [String: ChangeInfo] = [:]
-            for entry in entries {
-                for revision in [entry.change.changeId.id, entry.change.commitId.id] where changes[revision] == nil {
-                    changes[revision] = entry.change
-                }
-            }
-            cache.changesByRevision = changes
-        }
-        return cache.changesByRevision?[changeId]
+        changeByRevision[changeId]
     }
 
     func canSquashIntoParent(_ target: ChangeInfo) -> Bool {
@@ -179,7 +263,7 @@ struct DAGViewModel {
     }
 
     func scrollId(for rev: String) -> String {
-        change(for: rev)?.selectionRevision ?? rev
+        changeByRevision[rev]?.selectionRevision ?? rev
     }
 
     /// Other visible commits that share this change's id — the siblings of a divergent change. Empty unless `change` is divergent. Used to offer an interdiff between two versions of the same change so the user can see which is safer to abandon.
@@ -190,7 +274,7 @@ struct DAGViewModel {
             .filter { $0.changeId.id == change.changeId.id && $0.commitId.id != change.commitId.id }
     }
 
-    nonisolated static func selectionDelta(
+    static func selectionDelta(
         keyCode: UInt16,
         charactersIgnoringModifiers: String?,
         controlPressed: Bool
@@ -216,12 +300,5 @@ struct DAGViewModel {
             default:
                 return nil
         }
-    }
-
-    /// All inputs are immutable, so row menus can share derived data for this view-model snapshot.
-    private final class Cache {
-        var selectedChanges: [ChangeInfo]?
-        var changesByRevision: [String: ChangeInfo]?
-        var activeLane: DagLaneSpan??
     }
 }

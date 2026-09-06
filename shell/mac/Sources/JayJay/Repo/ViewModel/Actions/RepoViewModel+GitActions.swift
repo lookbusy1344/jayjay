@@ -110,6 +110,7 @@ extension RepoViewModel {
                 state: \.isPushingInFlight,
                 busyMessage: Localized.Repo.pushAlreadyInProgress
             ),
+            cancelsGraph: false,
             onSuccess: { viewModel, message in
                 viewModel.pushSync = nil
                 viewModel.info = message
