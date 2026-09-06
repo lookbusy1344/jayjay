@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RefreshSpinner: View {
     var animating: Bool
+    var label = Localized.Repo.refresh
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Spin {
@@ -25,7 +26,7 @@ struct RefreshSpinner: View {
 
     var body: some View {
         TimelineView(.animation(paused: isResting || reduceMotion)) { context in
-            Label(Localized.Repo.refresh, systemImage: "arrow.triangle.2.circlepath")
+            Label(label, systemImage: "arrow.triangle.2.circlepath")
                 .rotationEffect(.degrees(reduceMotion ? 0 : angle(at: context.date)))
         }
         .onChange(of: animating, initial: true) { _, active in

@@ -1,15 +1,11 @@
 import Foundation
 import JayJayCore
 
-private struct RepoRebaseRefreshResult {
-    let graph: GraphWithLayout
-    let selectedChange: ChangeDetail?
-    let workingCopyChangeId: String
-    let workingCopyDescription: String
+private struct RepoRebaseResult {
+    let preferredRev: String
     let moved: Bool
     let hadConflicts: Bool
     let operationId: String?
-    let context: RepoRefreshContext
 }
 
 extension RepoViewModel {
@@ -34,36 +30,16 @@ extension RepoViewModel {
             viewModel.error = message
         }
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         isRefreshingInFlight = true
         error = nil
-        let includeSubmoduleStatuses = includeSubmoduleStatuses
 
-        runRepoTask { [requestedRevset = revset, includeSubmoduleStatuses] repo in
-            try Self.rebaseAndReload(
-                repo: repo,
-                command: command,
-                revset: requestedRevset,
-                includeSubmoduleStatuses: includeSubmoduleStatuses
-            )
+        runRepoTask { repo in
+            try Self.performRebase(repo: repo, command: command)
         } onSuccess: { viewModel, result in
             viewModel.successActionSignal += 1
-            viewModel.setGraph(result.graph.entries, graph: result.graph)
-            viewModel.applySingleSelectedChange(result.selectedChange)
-            viewModel.applyWorkingCopy(
-                changeId: result.workingCopyChangeId,
-                description: result.workingCopyDescription
-            )
-            viewModel.apply(result.context)
-            viewModel.isLoading = false
-            viewModel.isRefreshingInFlight = false
-            viewModel.canLoadMore = Self.canLoadMore(
-                revset: viewModel.revset,
-                loadedCount: result.graph.entries.count
-            )
-            viewModel.fetchPrInfo(bookmarks: result.selectedChange?.info.bookmarks ?? [])
-            viewModel.resumePendingBackgroundRefresh()
-
+            viewModel.refresh(selecting: result.preferredRev, snapshotWorkingCopy: false)
             viewModel.actionNotice = RepoActionNotice(
                 message: command.feedbackMessage(moved: result.moved, hadConflicts: result.hadConflicts),
                 undoOperationId: result.moved ? result.operationId : nil
@@ -76,12 +52,7 @@ extension RepoViewModel {
         }
     }
 
-    private static func rebaseAndReload(
-        repo: JayJayRepo,
-        command: RepoRebaseCommand,
-        revset: String,
-        includeSubmoduleStatuses: Bool
-    ) throws -> RepoRebaseRefreshResult {
+    private static func performRebase(repo: JayJayRepo, command: RepoRebaseCommand) throws -> RepoRebaseResult {
         let tracked = try trackingOperation(repo: repo) { repo -> (preferredRev: String, rebasedRevset: String) in
             if command.selectionRevs.isEmpty {
                 let rebased = try repo.rebase(rev: command.sourceRev, dest: command.destRev, mode: command.mode)
@@ -93,31 +64,15 @@ extension RepoViewModel {
             return (source.changeId.id, rebasedChangeIds.joined(separator: " | "))
         }
         let (preferredRev, rebasedRevset) = tracked.result
-        let operationId = tracked.operationId
         // A rebase of changes already in place records no operation.
-        let moved = operationId != nil
+        let moved = tracked.operationId != nil
         try repo.refreshWorkingCopy()
-
-        let graph = try repo.logGraphWithLayout(revset: revset)
-        let log = graph.entries.map(\.change)
-        let selectedChange = try loadSelectedDetail(
-            repo: repo,
-            log: log,
-            preferredRev: preferredRev,
-            includeSubmoduleStatuses: includeSubmoduleStatuses
-        )
-        let workingCopy = log.first(where: { $0.isWorkingCopy })
         let hadConflicts = try moved && repo.log(revset: rebasedRevset).contains(where: \.hasConflict)
-
-        return try RepoRebaseRefreshResult(
-            graph: graph,
-            selectedChange: selectedChange,
-            workingCopyChangeId: workingCopy?.changeId.id ?? "",
-            workingCopyDescription: workingCopy?.description ?? "",
+        return RepoRebaseResult(
+            preferredRev: preferredRev,
             moved: moved,
             hadConflicts: hadConflicts,
-            operationId: operationId,
-            context: RepoRefreshContext(repo: repo)
+            operationId: tracked.operationId
         )
     }
 }

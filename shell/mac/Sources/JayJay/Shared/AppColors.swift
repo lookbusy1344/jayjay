@@ -82,6 +82,12 @@ struct AppColors: Equatable {
             case .modified, .renamed: return Color(red: 23 / 255, green: 92 / 255, blue: 211 / 255)
         }
     }
+
+    /// The DAG "lanes continue off-screen" chevron. A soft blue that stays distinct from the neutral
+    /// graph strokes and reads clearly over both plain and selection-tinted rows.
+    static func dagOverflowMarker(_ scheme: ColorScheme) -> Color {
+        Color(rgb: scheme == .dark ? 0x93B8F5 : 0x3F7AD6)
+    }
 }
 
 extension Color {
