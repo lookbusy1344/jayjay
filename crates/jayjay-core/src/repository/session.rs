@@ -94,6 +94,37 @@ impl Repo {
             Backend::Remote(_) => {}
         }
     }
+    /// A remote session loads the whole revset in one call and publishes it as a single complete snapshot.
+    pub fn start_log_graph(
+        &self,
+        request: LogGraphRequest,
+        token: GraphLoadToken,
+        mut on_event: impl FnMut(LogGraphEvent),
+    ) {
+        if let Backend::Local(repo) = &self.backend {
+            return repo.start_log_graph(request, token, on_event);
+        }
+        let snapshot = self.log_graph(&request.revset).and_then(|entries| {
+            let layout =
+                dag::DagLayout::compute(&entries, self.log_graph_synthetic_elided_nodes()?);
+            Ok(LogGraphSnapshot {
+                loaded_rows: u32::try_from(entries.len()).unwrap_or(u32::MAX),
+                entries,
+                layout,
+                is_complete: true,
+            })
+        });
+        if token.is_canceled() {
+            return on_event(LogGraphEvent::Canceled);
+        }
+        match snapshot {
+            Ok(snapshot) => {
+                on_event(LogGraphEvent::Snapshot(snapshot));
+                on_event(LogGraphEvent::Finished);
+            }
+            Err(error) => on_event(LogGraphEvent::Failed(error)),
+        }
+    }
     pub fn review_file_snapshot(
         &self,
         rev: &str,

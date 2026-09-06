@@ -169,6 +169,7 @@ api! {
         fn log(revset_str: Text) -> Vec<ChangeInfo>;
         fn check_revset(revset_str: Text) -> ();
         fn log_graph(revset_str: Text) -> Vec<GraphEntry>;
+        fn log_graph_synthetic_elided_nodes() -> bool;
         fn list_tags() -> Vec<TagInfo>;
         fn create_tag(name: Text, rev: Text) -> ();
         fn delete_tag(name: Text) -> ();
