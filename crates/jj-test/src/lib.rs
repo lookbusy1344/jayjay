@@ -5,6 +5,7 @@ pub mod cmd;
 pub mod env;
 pub mod formats;
 pub mod linear;
+pub mod oracle;
 pub mod repo;
 mod template;
 
@@ -16,8 +17,10 @@ pub use cmd::{
 pub use env::{review_store_env, scoped_env};
 pub use formats::FormatFixture;
 pub use linear::LinearFixture;
+pub use oracle::cli_log_graph_ascii;
 pub use repo::{
-    add_two_group_edit, change_by_description, changed_paths, current_op_id, find_bookmark,
+    DAG_PARITY_REVSET, add_two_group_edit, build_dag_parity_repo, build_fork_merge_repo,
+    change_by_description, changed_paths, commit_ids_from_cli_log, current_op_id, find_bookmark,
     find_change, first_change, init_jj_repo, selection_for_lines, setup_source_change_with_child,
     setup_stack, whole_file_selection,
 };

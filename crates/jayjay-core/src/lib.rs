@@ -72,14 +72,17 @@ pub use merge_editor::{MergeEditorHunkExt, MergeScrollMap};
 pub(crate) use repo::jj_binary;
 #[cfg(feature = "repository")]
 pub use repo::{
-    AiProvider, CloneRequest, DeviceSignIn, DiffExcerpt, HostLogin, JjConfigEntry, JjConfigSection,
-    JjUserConfig, Repo, RepoHost, ReviewNotesReport, ReviewOutputFormat, SyncToken, TokenSource,
-    UserIdentity, add_review_note, branch_name_slug, check_jj_environment, compose_bisect_range,
-    enclosing_workspace_root, find_existing_binary, home_dir, init_jj_git_repo, is_executable_file,
-    is_valid_bookmark_name, is_valid_workspace_name, jj_user_config, login_shell, login_shell_path,
-    mark_review_file, resolve_review_note, review_display_group_map_from_hunk, review_notes_output,
-    review_snapshot_from_hunk, review_status_output, unmark_review_files, use_system_keychain,
-    workspace_primary_root, workspace_root,
+    AiProvider, BACKGROUND_LOG_BATCH_ROWS, CloneRequest, DeviceSignIn, DiffExcerpt,
+    EmptyStateUpdate, FIRST_RESULT_BUDGET, GraphLoadToken, HostLogin, INITIAL_LOG_BATCH_ROWS,
+    JjConfigEntry, JjConfigSection, JjUserConfig, LogGraphEvent, LogGraphProgress, LogGraphRequest,
+    LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo, RepoHost, ReviewNotesReport, ReviewOutputFormat,
+    SyncToken, TokenSource, UserIdentity, add_review_note, branch_name_slug, check_jj_environment,
+    compose_bisect_range, enclosing_workspace_root, find_existing_binary, home_dir,
+    init_jj_git_repo, is_executable_file, is_valid_bookmark_name, is_valid_workspace_name,
+    jj_user_config, login_shell, login_shell_path, mark_review_file, resolve_review_note,
+    review_display_group_map_from_hunk, review_notes_output, review_snapshot_from_hunk,
+    review_status_output, unmark_review_files, use_system_keychain, workspace_primary_root,
+    workspace_root,
 };
 #[cfg(feature = "repository")]
 pub use revset::{
