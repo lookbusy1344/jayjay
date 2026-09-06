@@ -14,6 +14,8 @@ use crate::ui::primitives::TOOLBAR_BUTTON_HEIGHT;
 
 pub(crate) struct ToolbarActivity {
     pub(crate) is_refreshing: bool,
+    /// True while a graph-load session's cancellation has been requested but not yet observed.
+    pub(crate) is_canceling_refresh: bool,
     pub(crate) is_fetching: bool,
     pub(crate) is_pushing: bool,
 }

@@ -27,12 +27,13 @@ impl RepoViewModel {
     pub fn new(path: PathBuf) -> Self {
         let repo_path: SharedString = path.display().to_string().into();
         let revset = build_default_revset(DEFAULT_REVSET_DEPTH);
-        match Self::open_blocking(path, &revset) {
+        match Self::open_blocking_with_graph(path, &revset) {
             Ok(loaded) => Self::ready(repo_path, RevsetFilterState::new(&revset), loaded),
             Err(e) => Self::error(repo_path, format!("{e}")),
         }
     }
 
+    /// Pair with [`RepoViewModel::open_async`], which opens the repository off the main thread and then starts the progressive graph session.
     pub fn opening(path: PathBuf) -> Self {
         Self::empty(path.display().to_string().into())
     }
@@ -40,12 +41,11 @@ impl RepoViewModel {
     /// Keeps window-open off the UI thread, since open/revset eval is slow on large checkouts.
     pub fn open_async(&mut self, cx: &mut Context<Self>) {
         let path = PathBuf::from(self.repo_path.as_ref());
-        let revset = self.revset().to_owned();
         let ready_revset = self.revset_filter.clone();
         self.begin_refreshing(cx);
         Self::background_update(
             cx,
-            async move { Self::open_blocking(path, &revset) },
+            async move { Self::open_blocking(path) },
             move |vm, opened, cx| {
                 vm.finish_repo_task(cx);
                 match opened {
@@ -68,7 +68,7 @@ impl RepoViewModel {
         let revset = build_default_revset(DEFAULT_REVSET_DEPTH);
         let loaded = {
             let revset = revset.clone();
-            cx.background_spawn(async move { Self::open_blocking(path, &revset) })
+            cx.background_spawn(async move { Self::open_blocking_with_graph(path, &revset) })
                 .await?
         };
         Ok(cx.new(|_| Self::ready(repo_path, RevsetFilterState::new(&revset), loaded)))
@@ -81,26 +81,36 @@ impl RepoViewModel {
         self.boot(cx);
     }
 
-    fn open_blocking(path: PathBuf, revset: &str) -> jayjay_core::CoreResult<OpenedRepo> {
+    fn open_blocking(path: PathBuf) -> jayjay_core::CoreResult<OpenedRepo> {
         let repo_root_path = jayjay_core::workspace_primary_root(&path.to_string_lossy())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         let repo = Repo::open(&path)?;
-        let entries = repo.log_graph(revset)?;
-        let bookmarks = repo.list_bookmarks().unwrap_or_default();
-        let vocabulary = repo.revset_vocabulary(&bookmarks);
-        let workspaces = repo.workspace_list().unwrap_or_default();
-        let pr_host_name = repo.pr_host_name();
-        let fix_unavailable_reason = repo.fix_unavailable_reason();
         Ok(OpenedRepo {
             repo: Arc::new(repo),
             repo_root_path,
-            entries,
-            bookmarks,
-            vocabulary,
-            workspaces,
-            pr_host_name,
-            fix_unavailable_reason,
+            entries: Vec::new(),
+            bookmarks: Vec::new(),
+            vocabulary: RevsetVocabulary::default(),
+            workspaces: Vec::new(),
+            pr_host_name: None,
+            fix_unavailable_reason: None,
         })
+    }
+
+    /// Loads the default-depth graph eagerly for callers that need a ready view model: component-test fixtures and detached workspace switches. Window open uses `open_async`.
+    fn open_blocking_with_graph(
+        path: PathBuf,
+        revset: &str,
+    ) -> jayjay_core::CoreResult<OpenedRepo> {
+        let mut opened = Self::open_blocking(path)?;
+        opened.repo.refresh_working_copy()?;
+        opened.entries = opened.repo.log_graph(revset)?;
+        opened.bookmarks = opened.repo.list_bookmarks().unwrap_or_default();
+        opened.vocabulary = opened.repo.revset_vocabulary(&opened.bookmarks);
+        opened.workspaces = opened.repo.workspace_list().unwrap_or_default();
+        opened.pr_host_name = opened.repo.pr_host_name();
+        opened.fix_unavailable_reason = opened.repo.fix_unavailable_reason();
+        Ok(opened)
     }
 
     fn ready(
@@ -122,7 +132,8 @@ impl RepoViewModel {
             .iter()
             .position(|e| e.change.is_working_copy)
             .or(if entries.is_empty() { None } else { Some(0) });
-        let dag_layout = Arc::new(DagLayout::compute(&entries));
+        let synthetic_elided_nodes = repo.log_graph_synthetic_elided_nodes().unwrap_or(true);
+        let dag_layout = Arc::new(DagLayout::compute(&entries, synthetic_elided_nodes));
         let changes: Vec<ChangeInfo> = entries.iter().map(|e| e.change.clone()).collect();
         let mut selected_changes = OrderedSelection::default();
         if let Some(change) = selected.and_then(|selected| changes.get(selected)) {
@@ -229,15 +240,11 @@ impl RepoViewModel {
             async {}
         })
         .detach();
-        // Snapshot small repos on open so the WC is current; huge checkouts defer (snapshot is slow).
-        if self
+        // Snapshot small repos on open so the WC is current; huge checkouts still load their graph progressively but defer the expensive snapshot.
+        let snapshot_working_copy = self
             .repo
             .as_ref()
-            .is_some_and(|repo| !repo.working_copy_is_large())
-        {
-            self.refresh(false, cx);
-        } else if let Some(ix) = self.selected {
-            self.select_change(ix, cx);
-        }
+            .is_some_and(|repo| !repo.working_copy_is_large());
+        self.refresh_with_working_copy_snapshot(false, snapshot_working_copy, cx);
     }
 }
