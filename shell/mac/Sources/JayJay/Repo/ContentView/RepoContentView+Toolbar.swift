@@ -14,9 +14,14 @@ extension RepoContentView {
             .accessibilityIdentifier(AID.Toolbar.sidebarToggle)
             toolbarButton(
                 .refresh,
-                help: "Refresh (⌘R)",
-                action: { viewModel.refresh() },
-                label: { RefreshSpinner(animating: viewModel.isRefreshingInFlight || isSwitchingWorkspace) }
+                help: "\(viewModel.graphLoadActionLabel) (⌘R)",
+                action: { viewModel.refreshOrCancel() },
+                label: {
+                    RefreshSpinner(
+                        animating: viewModel.isRefreshingInFlight || isSwitchingWorkspace,
+                        label: viewModel.graphLoadActionLabel
+                    )
+                }
             )
             .keyboardShortcut("r")
             syncButton(.pull, inFlight: viewModel.isPullingInFlight) {
