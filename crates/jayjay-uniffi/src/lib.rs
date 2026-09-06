@@ -16,6 +16,7 @@ mod file_tree;
 mod fonts;
 mod fuzzy;
 mod github_alias;
+mod log_graph;
 mod markdown;
 #[cfg(feature = "desktop")]
 mod merge_scroll;
