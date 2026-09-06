@@ -1,7 +1,7 @@
 use std::fs;
 
 use jayjay_core::compare::combined_diff_revsets;
-use jayjay_core::{DEFAULT_REVSET, Repo, revset_presets};
+use jayjay_core::{DEFAULT_REVSET_DEPTH, Repo, build_default_revset, revset_presets};
 use jj_test::{init_jj_repo, run_jj};
 
 #[test]
@@ -56,7 +56,9 @@ fn default_revset_shows_nearby_heads() {
 
     let repo = Repo::open(&repo_path).expect("open repo");
 
-    let log = repo.log(DEFAULT_REVSET).expect("evaluate default revset");
+    let log = repo
+        .log(&build_default_revset(DEFAULT_REVSET_DEPTH))
+        .expect("evaluate default revset");
     assert!(
         !log.is_empty(),
         "default revset should evaluate to visible changes"
@@ -115,6 +117,7 @@ fn default_revset_evaluates_in_cli_and_app_parser() {
     let temp_dir = init_jj_repo();
     let repo_path = temp_dir.path().join("repo");
     let repo_str = repo_path.to_str().expect("repo path utf-8");
+    let default_revset = build_default_revset(DEFAULT_REVSET_DEPTH);
 
     let cli = run_jj(&[
         "-R",
@@ -122,7 +125,7 @@ fn default_revset_evaluates_in_cli_and_app_parser() {
         "log",
         "--no-graph",
         "-r",
-        DEFAULT_REVSET,
+        &default_revset,
         "-T",
         "commit_id.short() ++ \"\\n\"",
     ]);
@@ -132,7 +135,7 @@ fn default_revset_evaluates_in_cli_and_app_parser() {
     );
 
     let repo = Repo::open(&repo_path).expect("open repo");
-    let app = repo.log(DEFAULT_REVSET).expect("evaluate default revset");
+    let app = repo.log(&default_revset).expect("evaluate default revset");
     assert!(
         !app.is_empty(),
         "JayJay should evaluate the same default revset as the jj CLI"
@@ -157,7 +160,7 @@ fn custom_immutable_heads_alias_can_reference_builtin_default_alias() {
 
     let repo = Repo::open(&repo_path).expect("open repo");
     let log = repo
-        .log(DEFAULT_REVSET)
+        .log(&build_default_revset(DEFAULT_REVSET_DEPTH))
         .expect("evaluate user immutable_heads() alias");
     assert!(
         log.iter().any(|change| change.is_working_copy),
