@@ -1,0 +1,14 @@
+# Per-test process isolation with a hang-kill: a wedged test is terminated on its
+# own instead of stalling the shared test binary.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+# The GPUI integration tests each drive a window-view context plus jj subprocesses;
+# unbounded parallelism starves memory on high-core machines, so cap their concurrency
+# while the lightweight unit crates keep running at full width.
+[test-groups]
+gpui-integration = { max-threads = 6 }
+
+[[profile.default.overrides]]
+filter = 'binary(gpui)'
+test-group = 'gpui-integration'

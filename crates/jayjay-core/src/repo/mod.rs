@@ -12,6 +12,7 @@ mod environment;
 mod evolog;
 mod file_editor;
 mod git;
+mod graph_load;
 mod hosted_repo;
 mod init;
 mod log;
@@ -49,6 +50,11 @@ pub use environment::is_executable_file;
 pub use environment::jj_binary;
 pub use environment::login_shell;
 pub use environment::login_shell_path;
+pub use graph_load::{
+    BACKGROUND_LOG_BATCH_ROWS, EmptyStateUpdate, FIRST_RESULT_BUDGET, GraphLoadToken,
+    INITIAL_LOG_BATCH_ROWS, LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot,
+    MAX_AUTO_LOADED_ROWS,
+};
 pub use init::init_jj_git_repo;
 pub use review_note_output::{
     ReviewNoteOutputFormat, add_review_note, resolve_review_note, review_notes_output,
@@ -90,6 +96,7 @@ pub struct Repo {
     repo_path: PathBuf,
     workspace_name: jj_lib::ref_name::WorkspaceNameBuf,
     repo: RwLock<Arc<ReadonlyRepo>>,
+    empty_commit_cache: RwLock<HashMap<CommitId, bool>>,
     running_jj_processes: RunningJjProcesses,
     immutable_ids_cache: RepoCache<log::ImmutableIds>,
     commit_tags_cache: RepoCache<HashMap<CommitId, Vec<String>>>,
@@ -119,6 +126,7 @@ impl Repo {
             repo_path: canonicalize(workspace.repo_path()),
             workspace_name: workspace.workspace_name().to_owned(),
             repo: RwLock::new(repo),
+            empty_commit_cache: RwLock::new(HashMap::new()),
             running_jj_processes: RunningJjProcesses::default(),
             immutable_ids_cache: RepoCache::default(),
             commit_tags_cache: RepoCache::default(),
