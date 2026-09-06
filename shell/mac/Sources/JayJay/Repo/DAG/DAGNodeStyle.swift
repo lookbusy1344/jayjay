@@ -35,19 +35,27 @@ struct DAGNodeStyle {
         }
     }
 
-    static func resolve(change: ChangeInfo) -> DAGNodeStyle {
+    static func resolve(change: ChangeInfo, radius baseRadius: CGFloat = DAGGeometry.preferredNodeRadius) -> DAGNodeStyle {
         DAGNodeStyle(
             isWorkingCopy: change.isWorkingCopy,
             isImmutable: change.isImmutable,
             hasConflict: change.hasConflict,
             isEmpty: change.isEmpty,
-            hasBookmark: !change.bookmarks.isEmpty
+            hasBookmark: !change.bookmarks.isEmpty,
+            baseRadius: baseRadius
         )
     }
 
-    init(isWorkingCopy: Bool, isImmutable: Bool, hasConflict: Bool, isEmpty: Bool, hasBookmark: Bool) {
+    init(
+        isWorkingCopy: Bool,
+        isImmutable: Bool,
+        hasConflict: Bool,
+        isEmpty: Bool,
+        hasBookmark: Bool,
+        baseRadius: CGFloat = DAGGeometry.preferredNodeRadius
+    ) {
         shape = isImmutable ? .diamond : .circle
-        radius = Self.radius(for: shape, hasBookmark: hasBookmark)
+        radius = Self.radius(for: shape, hasBookmark: hasBookmark, baseRadius: baseRadius)
         fill = if isWorkingCopy {
             .filled(.accentColor)
         } else if hasConflict {
@@ -61,8 +69,8 @@ struct DAGNodeStyle {
         }
     }
 
-    static func radius(for shape: Shape, hasBookmark: Bool) -> CGFloat {
-        let circleRadius: CGFloat = hasBookmark ? nodeRadius + 1 : nodeRadius
+    static func radius(for shape: Shape, hasBookmark: Bool, baseRadius: CGFloat = DAGGeometry.preferredNodeRadius) -> CGFloat {
+        let circleRadius: CGFloat = hasBookmark ? baseRadius + 1 : baseRadius
         return shape == .diamond ? circleRadius * diamondRadiusScale : circleRadius
     }
 

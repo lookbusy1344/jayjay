@@ -100,6 +100,7 @@ extension RepoViewModel {
         undoable: ((Result) -> String?)? = nil,
         // Undo and redo step through history rather than act, so they never count toward the rating prompt.
         signalsSuccess: Bool = true,
+        cancelsGraph: Bool = true,
         beforeRefresh: @escaping @MainActor (RepoViewModel) -> Void = { _ in },
         onSuccess: @escaping @MainActor (RepoViewModel, Result) -> Void = { _, _ in },
         // A manual refresh clears `error`, so anything that sets it belongs here rather than in `onSuccess`.
@@ -116,6 +117,9 @@ extension RepoViewModel {
                 return false
             }
             self[keyPath: gate.state] = true
+        }
+        if cancelsGraph {
+            cancelGraphLoadForMutation()
         }
         lastInternalMutationAt = Date()
         pendingMutations += 1

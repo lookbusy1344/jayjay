@@ -28,9 +28,7 @@ enum DAGRowRebaseState: Equatable {
     case hoverTarget(previewText: String?)
 }
 
-/// Drop-target state for a bookmark/@ chip drag. Unlike a rebase, only the
-/// hovered row matters. A resolved bookmark ignores its own row; a conflicted
-/// chip may highlight that row so dropping there picks the commit.
+/// Drop-target state for a bookmark/@ chip drag. Unlike a rebase, only the hovered row matters. A resolved bookmark ignores its own row; a conflicted chip may highlight that row so dropping there picks the commit.
 enum DAGRowBookmarkDropState: Equatable {
     case none
     /// `previewText` is nil until the hover-preview delay elapses, then "Move … here?".
@@ -40,7 +38,7 @@ enum DAGRowBookmarkDropState: Equatable {
 struct DAGRowViewModel {
     let entry: GraphEntry
     let layout: DAGLayout
-    let index: Int
+    let geometry: DAGGeometry
     let colorScheme: ColorScheme
     let isActivePane: Bool
     private(set) var selectionAccent: DAGRowSelectionAccent?
@@ -52,10 +50,29 @@ struct DAGRowViewModel {
     let activeLane: DagLaneSpan?
     let laneEndBlink: Bool
 
+    var row: DagRowShape? {
+        layout.row(for: entry.change.commitId.id)
+    }
+
+    /// Nil when no lane is highlighted, which leaves every line at full strength.
+    var laneEmphasis: DAGLaneEmphasis? {
+        DAGLaneEmphasis(
+            span: activeLane,
+            rowIndex: layout.rowIndex(for: entry.change.commitId.id),
+            nodeColumn: Int(row?.nodeColumn ?? 0)
+        )
+    }
+
+    /// Synthetic `(elided revisions)` bands owned by this row, in `jj log`'s emission order. Never
+    /// selectable or independently addressable — Rust never gives one a real commit id.
+    var elisionBands: [DagElisionBand] {
+        row?.elisionsAfter ?? []
+    }
+
     init(
         entry: GraphEntry,
         layout: DAGLayout,
-        index: Int,
+        geometry: DAGGeometry,
         selectedId: String?,
         selectedIds: [String] = [],
         compareFromId: String?,
@@ -71,7 +88,7 @@ struct DAGRowViewModel {
     ) {
         self.entry = entry
         self.layout = layout
-        self.index = index
+        self.geometry = geometry
         self.colorScheme = colorScheme
         self.isActivePane = isActivePane
         self.activeLane = activeLane
@@ -150,13 +167,46 @@ struct DAGRowViewModel {
     }
 
     var graphWidth: CGFloat {
-        layout.graphWidth
+        geometry.graphWidth(forColumnCount: graphColumnCount)
+    }
+
+    /// True when this row's native lanes run past the gutter budget, so the graph column draws an overflow marker at its trailing edge.
+    var isGraphClipped: Bool {
+        geometry.isClipped(forColumnCount: graphColumnCount)
+    }
+
+    private var graphColumnCount: Int {
+        Int(row?.graphColumnCount ?? 1)
     }
 
     var descriptionLine: String? {
         let line = change.description.components(separatedBy: "\n").first ?? ""
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var accessibilitySummary: String {
+        var parts = [change.changeId.id]
+        if change.isWorkingCopy {
+            parts.append(Localized.Repo.workingCopyLabel)
+        }
+        if change.hasConflict {
+            parts.append(Localized.Repo.conflictBadge)
+        }
+        if change.isDivergent {
+            parts.append(Localized.Repo.divergentBadge)
+        }
+        parts.append(contentsOf: change.bookmarks.map { Localized.Repo.bookmarkLabel(name: $0) })
+        parts.append(contentsOf: change.tags.map { Localized.Repo.tagLabel(name: $0) })
+        parts.append(descriptionLine ?? Localized.Repo.noDescription)
+        parts.append(change.author.name)
+        if !elisionBands.isEmpty {
+            parts.append(Localized.Repo.elidedRevisions)
+        }
+        if isGraphClipped {
+            parts.append(Localized.Repo.graphContinuesBeyondTheSidebar)
+        }
+        return parts.joined(separator: ", ")
     }
 
     var rowBackground: AnyShapeStyle {
