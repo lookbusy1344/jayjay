@@ -115,3 +115,11 @@ impl RepoViewModel {
             && !self.has_multiple_change_selection()
     }
 }
+
+impl Drop for RepoViewModel {
+    fn drop(&mut self) {
+        if let Some(token) = &self.loading.graph_session {
+            token.cancel();
+        }
+    }
+}
