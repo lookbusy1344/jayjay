@@ -63,16 +63,31 @@ impl RepoWindow {
     }
 
     pub(super) fn apply_revset_filter(&mut self, cx: &mut Context<Self>) {
-        let Some(input) = self.revset_filter.as_ref() else {
+        let Some(submitted) = self
+            .revset_filter
+            .as_ref()
+            .map(|input| input.text().trim().to_owned())
+        else {
             return;
         };
-        let revset = input.text().trim().to_owned();
-        let revset = if revset.is_empty() {
+        let use_default = submitted.is_empty() || {
+            let vm = self.vm.read(cx);
+            vm.revset_depth().is_some() && vm.revset.as_ref() == submitted
+        };
+        let displayed = if use_default {
             jayjay_core::build_default_revset(jayjay_core::DEFAULT_REVSET_DEPTH)
         } else {
-            revset
+            submitted
         };
-        self.apply_revset(&revset, cx);
+        if let Some(input) = self.revset_filter.as_mut() {
+            input.set_text(displayed.clone());
+        }
+        self.vm.update(cx, |vm, cx| {
+            vm.apply_revset(if use_default { "" } else { &displayed }, cx)
+        });
+        self.previous_ancestor_filter = None;
+        LineInput::hide_for_owner(self, cx, Self::revset_input);
+        cx.notify();
     }
 
     pub(in super::super) fn apply_revset(&mut self, revset: &str, cx: &mut Context<Self>) {

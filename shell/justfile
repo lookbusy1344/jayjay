@@ -387,5 +387,5 @@ gpui-appimage:
   cargo build --release --locked -p jayjay-gpui
   "{{root}}/dist/appimage/build.sh" "{{root}}/target/release/jayjay-gpui" "$(uname -m)" "{{root}}/build/gpui-appimage"
 
-gpui-test:
-  cargo test -p jayjay-gpui
+gpui-test *args:
+  cargo nextest run -p jayjay-gpui {{args}}

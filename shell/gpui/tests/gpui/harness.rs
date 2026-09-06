@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use gpui::{
     Entity, Global, Modifiers, MouseButton, Pixels, TestAppContext, VisualTestContext, point, px,
@@ -12,18 +13,28 @@ use jayjay_gpui::app::theme::Theme;
 use jayjay_gpui::repo::RepoWindow;
 use jj_test::{LinearFixture, run_git, run_jj_in};
 
+const SETTLE_POLL_COUNT: usize = 8;
+const SETTLE_CLOCK_STEP: Duration = Duration::from_millis(10);
+const SETTLE_THREAD_YIELD: Duration = Duration::from_millis(15);
+
 pub(crate) fn settle(cx: &mut TestAppContext) {
-    for _ in 0..8 {
+    for _ in 0..SETTLE_POLL_COUNT {
+        cx.executor().advance_clock(SETTLE_CLOCK_STEP);
+        while cx.executor().tick() {}
         cx.run_until_parked();
         cx.executor().run_until_parked();
+        std::thread::sleep(SETTLE_THREAD_YIELD);
     }
 }
 
 pub(crate) fn settle_visual(cx: &mut VisualTestContext) {
-    for _ in 0..8 {
+    for _ in 0..SETTLE_POLL_COUNT {
+        cx.cx.executor().advance_clock(SETTLE_CLOCK_STEP);
+        while cx.cx.executor().tick() {}
         cx.run_until_parked();
         cx.cx.run_until_parked();
         cx.cx.executor().run_until_parked();
+        std::thread::sleep(SETTLE_THREAD_YIELD);
     }
 }
 

@@ -65,7 +65,7 @@ impl RepoWindow {
                     let mut view = if show_onboarding {
                         Self::new_with_onboarding(path, cx)
                     } else {
-                        Self::new(path, cx)
+                        Self::new_async(path, cx)
                     };
                     view.boot(cx);
                     view
