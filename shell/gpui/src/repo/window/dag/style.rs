@@ -4,7 +4,7 @@ use jayjay_core::ChangeInfo;
 
 use crate::app::theme::Theme;
 
-const NODE_RADIUS_BASE: f32 = 4.5;
+pub(crate) const PREFERRED_NODE_RADIUS: f32 = 4.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NodeShape {
@@ -35,7 +35,7 @@ pub(crate) struct DagNodeStyle {
 }
 
 impl DagNodeStyle {
-    pub fn resolve(change: &ChangeInfo, theme: &Theme) -> Self {
+    pub fn resolve(change: &ChangeInfo, theme: &Theme, base_radius: f32) -> Self {
         Self::new(
             NodeFlags {
                 is_working_copy: change.is_working_copy,
@@ -45,10 +45,11 @@ impl DagNodeStyle {
                 has_bookmark: !change.bookmarks.is_empty(),
             },
             theme,
+            base_radius,
         )
     }
 
-    pub fn new(flags: NodeFlags, theme: &Theme) -> Self {
+    pub fn new(flags: NodeFlags, theme: &Theme, base_radius: f32) -> Self {
         let shape = if flags.is_immutable {
             NodeShape::Diamond
         } else {
@@ -67,16 +68,16 @@ impl DagNodeStyle {
         };
         Self {
             shape,
-            radius: Self::radius(shape, flags.has_bookmark),
+            radius: Self::radius(shape, flags.has_bookmark, base_radius),
             fill,
         }
     }
 
-    pub fn radius(shape: NodeShape, has_bookmark: bool) -> f32 {
+    pub fn radius(shape: NodeShape, has_bookmark: bool, base_radius: f32) -> f32 {
         let circle_radius = if has_bookmark {
-            NODE_RADIUS_BASE + 1.0
+            base_radius + 1.0
         } else {
-            NODE_RADIUS_BASE
+            base_radius
         };
         match shape {
             NodeShape::Diamond => circle_radius * FRAC_PI_2.sqrt(),
@@ -87,7 +88,7 @@ impl DagNodeStyle {
 
 #[cfg(test)]
 mod tests {
-    use super::{DagNodeStyle, NodeShape};
+    use super::{DagNodeStyle, NodeShape, PREFERRED_NODE_RADIUS};
     use crate::app::theme::Theme;
     use jayjay_core::mock::change_info;
 
@@ -99,7 +100,7 @@ mod tests {
             for (immutable, expected) in [(false, NodeShape::Circle), (true, NodeShape::Diamond)] {
                 change.is_immutable = immutable;
                 assert_eq!(
-                    DagNodeStyle::resolve(&change, &Theme::light()).shape,
+                    DagNodeStyle::resolve(&change, &Theme::light(), PREFERRED_NODE_RADIUS).shape,
                     expected
                 );
             }

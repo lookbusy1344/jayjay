@@ -81,7 +81,7 @@ impl RepoViewModel {
             cx,
             move |repo| repo.rebase(&rev, &dest, mode),
             move |vm, rebased: &String, cx| {
-                vm.refresh_preferring(false, Some((change_id, rebased.clone())), cx)
+                vm.refresh_preferring(false, true, Some((change_id, rebased.clone())), cx)
             },
         )
     }
@@ -160,7 +160,7 @@ impl RepoViewModel {
             cx,
             move |repo| repo.duplicate(&rev),
             |vm, result: &String, cx| {
-                vm.refresh_preferring(false, Some((String::new(), result.clone())), cx)
+                vm.refresh_preferring(false, true, Some((String::new(), result.clone())), cx)
             },
         )
     }
@@ -186,7 +186,7 @@ impl RepoViewModel {
             cx,
             move |repo| repo.revert_change(&rev),
             |vm, result: &String, cx| {
-                vm.refresh_preferring(false, Some((String::new(), result.clone())), cx)
+                vm.refresh_preferring(false, true, Some((String::new(), result.clone())), cx)
             },
         )
     }
