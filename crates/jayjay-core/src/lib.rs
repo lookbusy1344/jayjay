@@ -61,10 +61,12 @@ pub use merge_editor::{MergeEditorHunkExt, MergeScrollMap};
 pub(crate) use repo::jj_binary;
 #[cfg(feature = "repository")]
 pub use repo::{
-    AiProvider, DiffExcerpt, JjConfigEntry, JjConfigSection, JjUserConfig, Repo, ReviewNotesReport,
-    ReviewOutputFormat, SyncToken, add_review_note, branch_name_slug, check_gh_environment,
-    check_glab_environment, check_jj_environment, check_origin_environment, find_existing_binary,
-    home_dir, init_jj_git_repo, is_executable_file, is_valid_bookmark_name,
+    AiProvider, BACKGROUND_LOG_BATCH_ROWS, DiffExcerpt, EmptyStateUpdate, FIRST_RESULT_BUDGET,
+    GraphLoadToken, INITIAL_LOG_BATCH_ROWS, JjConfigEntry, JjConfigSection, JjUserConfig,
+    LogGraphEvent, LogGraphProgress, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo,
+    ReviewNotesReport, ReviewOutputFormat, SyncToken, add_review_note, branch_name_slug,
+    check_gh_environment, check_glab_environment, check_jj_environment, check_origin_environment,
+    find_existing_binary, home_dir, init_jj_git_repo, is_executable_file, is_valid_bookmark_name,
     is_valid_workspace_name, jj_user_config, login_shell, login_shell_path, mark_review_file,
     resolve_review_note, review_display_group_map_from_hunk, review_notes_output,
     review_snapshot_from_hunk, review_status_output, unmark_review_files, workspace_primary_root,
