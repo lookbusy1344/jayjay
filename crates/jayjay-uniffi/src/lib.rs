@@ -29,6 +29,7 @@ mod fuzzy;
 mod l10n;
 #[cfg(feature = "desktop")]
 mod log_file;
+mod log_graph;
 mod markdown;
 #[cfg(feature = "desktop")]
 mod merge_scroll;
