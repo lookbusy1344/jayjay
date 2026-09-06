@@ -12,9 +12,22 @@ use crate::app::theme::{FONT_BODY, FONT_ID, FONT_META, FONT_TAG, Theme, ui_font_
 use crate::ui::icons::glyph;
 use crate::ui::primitives::{capsule, icon_chip};
 
+use super::dag::ELISION_BAND_HEIGHT;
 use super::dag_drag::{DagDrag, DagDragGhost};
 
 const DAG_ROW_HEIGHT: f32 = 76.;
+
+/// The row's resting background, matching the graph column's overflow-fade target so the fade
+/// dissolves clipped lanes into the same colour the row paints behind them.
+pub(super) fn row_background(t: &Theme, is_selected: bool, is_compare_source: bool) -> u32 {
+    if is_selected {
+        t.selected_bg
+    } else if is_compare_source {
+        t.tag_divergent_bg
+    } else {
+        t.sidebar_bg
+    }
+}
 
 pub(super) type ChipRightClick =
     Arc<dyn Fn(&str, &MouseDownEvent, &mut Window, &mut App) + Send + Sync + 'static>;
@@ -33,6 +46,10 @@ pub(super) struct DagRow<'a> {
     pub dag_col: Option<AnyElement>,
     pub bookmarks: &'a [BookmarkInfo],
     pub entries: &'a Arc<Vec<GraphEntry>>,
+    /// Synthetic `(elided revisions)` bands this row owns, and the widest band stack anywhere in
+    /// the layout — every row reserves the latter so `uniform_list` can keep one height.
+    pub elision_bands: usize,
+    pub widest_elision_bands: usize,
 }
 
 pub(super) fn dag_row<F, FR>(
@@ -57,6 +74,8 @@ where
         dag_col,
         bookmarks,
         entries,
+        elision_bands,
+        widest_elision_bands,
     } = row;
     let short_id: SharedString = change.change_id.chars().take(12).collect::<String>().into();
     let summary = first_line(&change.description);
@@ -87,7 +106,7 @@ where
         .flex()
         .flex_row()
         .w_full()
-        .h(px(dag_row_height(t)))
+        .h(px(dag_row_height(t, widest_elision_bands)))
         .bg(row_bg)
         .hover(|s| s.bg(hover_bg))
         .cursor_pointer()
@@ -115,29 +134,51 @@ where
     if let Some(col) = dag_col {
         row_div = row_div.child(col);
     }
-    row_div
-        .child(
+    let mut text_column = div().flex().flex_col().flex_1().min_w_0().child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(3.))
+            .pr_3()
+            .py_2()
+            .flex_1()
+            .min_w_0()
+            .child(tags_row(
+                change,
+                short_id,
+                ix,
+                t,
+                bookmarks,
+                on_bookmark_right_click,
+                on_workspace_right_click,
+            ))
+            .child(summary_line(&summary, t))
+            .child(meta_row(&change.author, t)),
+    );
+    if elision_bands > 0 {
+        text_column = text_column.child(elision_labels(elision_bands, t));
+    }
+    row_div.child(text_column).into_any_element()
+}
+
+/// One `(elided revisions)` label per synthetic band, aligned with the bands the graph column
+/// paints in the same bottom strip of the row. Never interactive — the whole row stays the real
+/// change's hit target.
+fn elision_labels(band_count: usize, t: &Theme) -> impl IntoElement {
+    let mut labels = div().flex().flex_col().pr_3().min_w_0();
+    for _ in 0..band_count {
+        labels = labels.child(
             div()
+                .h(px(ELISION_BAND_HEIGHT))
                 .flex()
-                .flex_col()
-                .gap(px(3.))
-                .pr_3()
-                .py_2()
-                .flex_1()
-                .min_w_0()
-                .child(tags_row(
-                    change,
-                    short_id,
-                    ix,
-                    t,
-                    bookmarks,
-                    on_bookmark_right_click,
-                    on_workspace_right_click,
-                ))
-                .child(summary_line(&summary, t))
-                .child(meta_row(&change.author, t)),
-        )
-        .into_any_element()
+                .items_center()
+                .text_size(ui_font_size(FONT_META))
+                .text_color(rgb(t.fg_faint))
+                .truncate()
+                .child("(elided revisions)"),
+        );
+    }
+    labels
 }
 
 fn tags_row(
@@ -396,7 +437,10 @@ fn meta_row(author: &CommitAuthor, t: &Theme) -> impl IntoElement {
         )
 }
 
-fn dag_row_height(t: &Theme) -> f32 {
+/// `uniform_list` gives every row one height, so a row reserves space for the widest band stack in
+/// the layout rather than its own. A row with fewer bands leaves the surplus above them, so its
+/// graph lanes still run to the row's bottom edge and meet the next row.
+pub(super) fn dag_row_height(t: &Theme, widest_elision_bands: usize) -> f32 {
     DAG_ROW_HEIGHT
         + t.scaled_font_size(FONT_TAG)
         + t.scaled_font_size(FONT_BODY)
@@ -404,6 +448,7 @@ fn dag_row_height(t: &Theme) -> f32 {
         - FONT_TAG
         - FONT_BODY
         - FONT_META
+        + ELISION_BAND_HEIGHT * widest_elision_bands as f32
 }
 
 pub(super) fn format_when(ts_millis: i64) -> String {
@@ -455,8 +500,27 @@ pub(super) fn first_line(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_relative;
+    use super::{Theme, dag_row_height, format_relative};
+    use crate::repo::window::dag::main_row_bottom;
     use chrono::Local;
+
+    /// Reserving the widest band stack for every row is what keeps a row's own content above its
+    /// bands. Sizing each row to its own band count instead would push a multi-band row's content
+    /// off the top of its fixed `uniform_list` slot.
+    #[test]
+    fn a_row_keeps_its_whole_content_above_its_own_elision_bands() {
+        let theme = Theme::light();
+        let widest = 5;
+        let height = dag_row_height(&theme, widest);
+        let bandless = dag_row_height(&theme, 0);
+
+        for bands in 0..=widest {
+            assert!(
+                main_row_bottom(height, bands) >= bandless,
+                "{bands} bands left less than a bandless row's content height"
+            );
+        }
+    }
 
     #[test]
     fn format_relative_floors_sub_minute_to_one_minute() {

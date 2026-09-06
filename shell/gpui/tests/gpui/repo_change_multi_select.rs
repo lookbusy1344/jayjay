@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::harness::*;
 use gpui::{Focusable, Modifiers, TestAppContext, VisualTestContext};
+use jayjay_core::dag::DagLayout;
 use jayjay_core::{EdgeType, GraphEdge, GraphEntry};
 use jayjay_gpui::repo::RepoWindow;
 use jayjay_gpui::repo::view_model::RepoViewModel;
@@ -132,7 +133,7 @@ fn indirect_visible_edge_disables_related_merge_selection(cx: &mut TestAppContex
             let descendant = vm.graph.changes[0].clone();
             let ancestor = vm.graph.changes[2].clone();
             vm.graph.changes = Arc::new(vec![descendant.clone(), ancestor.clone()]);
-            vm.graph.entries = Arc::new(vec![
+            let entries = vec![
                 GraphEntry {
                     change: descendant,
                     edges: vec![GraphEdge {
@@ -144,7 +145,9 @@ fn indirect_visible_edge_disables_related_merge_selection(cx: &mut TestAppContex
                     change: ancestor,
                     edges: Vec::new(),
                 },
-            ]);
+            ];
+            vm.graph.dag_layout = Arc::new(DagLayout::compute(&entries, true));
+            vm.graph.entries = Arc::new(entries);
         });
         view.handle_change_row_click(1, Modifiers::secondary_key(), cx);
     });

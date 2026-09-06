@@ -52,7 +52,7 @@ fn ignore_whitespace_setting_applies_on_open_and_updates_all_windows(cx: &mut Te
 #[gpui::test]
 fn reselecting_current_file_does_not_reset_diff_panel(cx: &mut TestAppContext) {
     let fixture = LinearFixture::build();
-    suppress_fs_watcher(cx);
+    install_test_globals(cx);
     let view = cx.new(|cx| RepoWindow::new(fixture.path.clone(), cx));
 
     view.update(cx, |view, cx| {
@@ -73,7 +73,7 @@ fn reselecting_current_file_does_not_reset_diff_panel(cx: &mut TestAppContext) {
 #[gpui::test]
 fn selecting_new_file_resets_diff_scroll_to_top(cx: &mut TestAppContext) {
     let fixture = LinearFixture::build();
-    suppress_fs_watcher(cx);
+    install_test_globals(cx);
     let view = cx.new(|cx| RepoWindow::new(fixture.path.clone(), cx));
 
     view.update(cx, |view, cx| {

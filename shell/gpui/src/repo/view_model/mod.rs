@@ -21,7 +21,8 @@ use jayjay_core::diff::{ConflictLineKind, FileDiff};
 use jayjay_core::error_message::unwrap_command_error;
 use jayjay_core::{
     AnnotationLine, BookmarkInfo, ChangeInfo, DEFAULT_REVSET_DEPTH, DiffHunk, DiffProjection,
-    DiffStats, GraphEntry, PrInfo, Repo, WorkspaceInfo, build_default_revset, default_revset_depth,
+    DiffStats, GraphEntry, GraphLoadToken, PrInfo, Repo, WorkspaceInfo, build_default_revset,
+    default_revset_depth,
 };
 use jayjay_markdown::MarkdownDocument;
 use jayjay_review::{ReviewFileSnapshot, ReviewNoteStatus};
@@ -44,7 +45,7 @@ struct OpenedRepo {
 pub struct GraphData {
     pub changes: Arc<Vec<ChangeInfo>>,
     pub entries: Arc<Vec<GraphEntry>>,
-    pub(crate) dag_layout: Arc<DagLayout>,
+    pub dag_layout: Arc<DagLayout>,
     pub(crate) bookmarks: Arc<Vec<BookmarkInfo>>,
     pub workspaces: Arc<Vec<WorkspaceInfo>>,
 }
@@ -97,6 +98,28 @@ pub struct LoadingState {
     pub pending_auto_refresh: Option<PendingRefresh>,
     refresh_indicator_gen: u64,
     refresh_minimum_elapsed: bool,
+    /// Set while a `start_log_graph` session is running for the current `refresh_gen`; the toolbar
+    /// refresh button becomes a cancel action for it. Cleared once the session's terminal event lands.
+    pub(crate) graph_session: Option<GraphLoadToken>,
+    /// Generation that owns `graph_session`. A mutation invalidates `refresh_gen` immediately so
+    /// stale snapshots cannot apply, but the terminal event for this generation still owns cleanup.
+    pub(crate) graph_session_gen: Option<u64>,
+    /// Graph generations currently represented in the shared repository-task count. Pausing
+    /// temporarily removes a generation; resuming adds it back without starting a new worker.
+    graph_in_flight_generations: HashSet<u64>,
+    /// True once `graph_session`'s token has been latched but its terminal event has not arrived yet.
+    pub graph_session_canceling: bool,
+    /// True once the active session's first snapshot has been applied; guards selection-restoration
+    /// logic so a later snapshot in the same session only appends rows instead of re-selecting.
+    graph_first_snapshot_applied: bool,
+    /// The first-result budget elapsed before any usable graph prefix arrived.
+    pub graph_load_slow: bool,
+    /// True while a session has paused at the row ceiling with more history available; drives the
+    /// Continue Loading affordance.
+    pub graph_paused: bool,
+    /// Row ceiling for the next session; `0` means the core default (`MAX_AUTO_LOADED_ROWS`).
+    /// Continue Loading raises it geometrically; a new revset resets it to `0`.
+    pub graph_row_ceiling: u32,
 }
 
 pub struct RepoViewModel {
@@ -155,6 +178,14 @@ pub(super) struct SelectionCache {
     pub(super) state: Option<(Vec<usize>, Arc<SelectionState>)>,
 }
 
+impl Drop for RepoViewModel {
+    fn drop(&mut self) {
+        if let Some(token) = &self.loading.graph_session {
+            token.cancel();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LoadedDiff {
     pub diff: Arc<FileDiff>,
@@ -198,13 +229,14 @@ impl RepoViewModel {
     pub fn new(path: PathBuf) -> Self {
         let repo_path: SharedString = path.display().to_string().into();
         let revset = build_default_revset(DEFAULT_REVSET_DEPTH);
-        match Self::open_blocking(path, &revset) {
+        match Self::open_blocking_for_tests(path, &revset) {
             Ok(loaded) => Self::ready(repo_path, revset.into(), loaded),
             Err(e) => Self::error(repo_path, format!("{e}")),
         }
     }
 
-    /// Pair with [`RepoViewModel::open_async`], which does the heavy open + graph load off the main thread.
+    /// Pair with [`RepoViewModel::open_async`], which opens the repository off the main thread and
+    /// then starts the progressive graph session.
     pub fn opening(path: PathBuf) -> Self {
         Self::empty(path.display().to_string().into())
     }
@@ -212,12 +244,11 @@ impl RepoViewModel {
     /// Keeps window-open off the UI thread, since open/revset eval is slow on large checkouts.
     pub fn open_async(&mut self, cx: &mut Context<Self>) {
         let path = PathBuf::from(self.repo_path.as_ref());
-        let revset = self.revset.to_string();
         let ready_revset = self.revset.clone();
         self.begin_refreshing(cx);
         Self::background_update(
             cx,
-            async move { Self::open_blocking(path, &revset) },
+            async move { Self::open_blocking(path) },
             move |vm, opened, cx| {
                 vm.finish_repo_task(cx);
                 match opened {
@@ -235,22 +266,30 @@ impl RepoViewModel {
         );
     }
 
-    fn open_blocking(path: PathBuf, revset: &str) -> jayjay_core::CoreResult<OpenedRepo> {
+    fn open_blocking(path: PathBuf) -> jayjay_core::CoreResult<OpenedRepo> {
         let repo_root_path = jayjay_core::workspace_primary_root(&path.to_string_lossy())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         let repo = Repo::open(&path)?;
-        let entries = repo.log_graph(revset)?;
-        let bookmarks = repo.list_bookmarks().unwrap_or_default();
-        let workspaces = repo.workspace_list().unwrap_or_default();
-        let pr_host_name = repo.pr_host_name();
         Ok(OpenedRepo {
             repo: Arc::new(repo),
             repo_root_path,
-            entries,
-            bookmarks,
-            workspaces,
-            pr_host_name,
+            entries: Vec::new(),
+            bookmarks: Vec::new(),
+            workspaces: Vec::new(),
+            pr_host_name: None,
         })
+    }
+
+    /// Eager constructor support for component-test fixtures. Production window open uses
+    /// `open_async` and never calls the complete-materialization API.
+    fn open_blocking_for_tests(path: PathBuf, revset: &str) -> jayjay_core::CoreResult<OpenedRepo> {
+        let mut opened = Self::open_blocking(path)?;
+        opened.repo.refresh_working_copy()?;
+        opened.entries = opened.repo.log_graph(revset)?;
+        opened.bookmarks = opened.repo.list_bookmarks().unwrap_or_default();
+        opened.workspaces = opened.repo.workspace_list().unwrap_or_default();
+        opened.pr_host_name = opened.repo.pr_host_name();
+        Ok(opened)
     }
 
     fn ready(repo_path: SharedString, revset: SharedString, loaded: OpenedRepo) -> Self {
@@ -270,7 +309,8 @@ impl RepoViewModel {
         if let Some(selected) = selected {
             selected_changes.replace(selected);
         }
-        let dag_layout = Arc::new(DagLayout::compute(&entries));
+        let synthetic_elided_nodes = repo.log_graph_synthetic_elided_nodes().unwrap_or(true);
+        let dag_layout = Arc::new(DagLayout::compute(&entries, synthetic_elided_nodes));
         let changes: Vec<ChangeInfo> = entries.iter().map(|e| e.change.clone()).collect();
         Self {
             repo: Some(repo),
@@ -386,16 +426,13 @@ impl RepoViewModel {
             async {}
         })
         .detach();
-        // Snapshot small repos on open so the WC is current; huge checkouts defer (snapshot is slow).
-        if self
+        // Snapshot small repos on open so the WC is current; huge checkouts still load their graph
+        // progressively but defer the expensive working-copy snapshot.
+        let snapshot_working_copy = self
             .repo
             .as_ref()
-            .is_some_and(|repo| !repo.working_copy_is_large())
-        {
-            self.refresh(false, cx);
-        } else if let Some(ix) = self.selected {
-            self.select_change(ix, cx);
-        }
+            .is_some_and(|repo| !repo.working_copy_is_large());
+        self.refresh_with_working_copy_snapshot(false, snapshot_working_copy, cx);
     }
 
     pub fn selected_change(&self) -> Option<&ChangeInfo> {
