@@ -58,6 +58,11 @@ test-wasm:
 test:
   cargo nextest run --workspace
 
+# Per-stage timing for progressive log-graph loading (release build).
+# Example: just profile-log-graph ~/big-repo 'all()'   |   just profile-log-graph --synthetic 5000
+profile-log-graph *args:
+  cargo run --release -p jayjay-core --example profile_log_graph -- {{args}}
+
 # Example: just profile diff sbs; just profile refresh ~/src/repo graph; just profile refresh --alloc ~/src/repo
 # Scenarios and caveats: crates/jj-diff/benches/profile_diff.md, crates/jayjay-core/benches/profile_refresh.md
 profile kind *args:

@@ -46,8 +46,14 @@ fn main() {
             let entries = timed("log_graph", || {
                 repo.log_graph(DEFAULT_REVSET).expect("log graph")
             });
+            let synthetic_elided_nodes = repo
+                .log_graph_synthetic_elided_nodes()
+                .expect("log graph settings");
             timed("layout", || {
-                black_box((DagLayout::compute(&entries), SelectionGraph::new(&entries)))
+                black_box((
+                    DagLayout::compute(&entries, synthetic_elided_nodes),
+                    SelectionGraph::new(&entries),
+                ))
             });
             eprintln!("rows: {}", entries.len());
         }
