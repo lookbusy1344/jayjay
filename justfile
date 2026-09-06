@@ -45,7 +45,12 @@ test-wasm:
   CC_wasm32_unknown_unknown="{{root}}/scripts/llvm-clang" CXX_wasm32_unknown_unknown="{{root}}/scripts/llvm-clang" CFLAGS_wasm32_unknown_unknown="-DJAYJAY_WASM_SYSROOT_REV=3" CXXFLAGS_wasm32_unknown_unknown="-DJAYJAY_WASM_SYSROOT_REV=3" cargo build -p jayjay-uniffi --no-default-features --features wasm --target wasm32-unknown-unknown --lib
 
 test:
-  cargo test --workspace
+  cargo nextest run --workspace
+
+# Per-stage timing for progressive log-graph loading (release build).
+# Example: just profile-log-graph ~/big-repo 'all()'   |   just profile-log-graph --synthetic 5000
+profile-log-graph *args:
+  cargo run --release -p jayjay-core --example profile_log_graph -- {{args}}
 
 test-app:
   just shell::test
