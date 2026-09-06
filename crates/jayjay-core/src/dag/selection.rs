@@ -50,6 +50,11 @@ impl SelectionGraph {
             .enumerate()
             .map(|(ix, entry)| (entry.change.commit_id.id.clone(), ix))
             .collect();
+        let lane_by_commit_id: HashMap<&str, usize> = layout
+            .rows
+            .iter()
+            .map(|row| (row.commit_id.as_str(), row.node_column as usize))
+            .collect();
         let rows: Vec<Row> = entries
             .iter()
             .map(|entry| Row {
@@ -62,7 +67,10 @@ impl SelectionGraph {
                     .collect(),
                 parent_commit_ids: entry.change.parents.clone(),
                 is_immutable: entry.change.is_immutable,
-                lane: layout.lane(&entry.change.commit_id.id),
+                lane: lane_by_commit_id
+                    .get(entry.change.commit_id.id.as_str())
+                    .copied()
+                    .unwrap_or_default(),
             })
             .collect();
         let mut children = vec![Vec::new(); rows.len()];
@@ -250,7 +258,7 @@ mod tests {
     use crate::mock::graph_entry;
 
     fn graph(entries: &[GraphEntry]) -> SelectionGraph {
-        SelectionGraph::new(entries, &DagLayout::compute(entries))
+        SelectionGraph::new(entries, &DagLayout::compute(entries, false))
     }
 
     /// d — c — b — a, plus a sibling head `x` on `c`, and `i` is immutable.
@@ -397,7 +405,7 @@ mod tests {
         assert_eq!(graph.lane_parent(4), None);
 
         let entries = [graph_entry("h1", &[]), graph_entry("h2", &[])];
-        let heads = SelectionGraph::new(&entries, &DagLayout::compute(&entries));
+        let heads = SelectionGraph::new(&entries, &DagLayout::compute(&entries, false));
         assert_eq!(
             (heads.lane_parent(0), heads.lane_child(1)),
             (Some(1), Some(0))
@@ -410,7 +418,7 @@ mod tests {
             graph_entry("d", &["z"]),
             graph_entry("z", &[]),
         ];
-        let siblings = SelectionGraph::new(&entries, &DagLayout::compute(&entries));
+        let siblings = SelectionGraph::new(&entries, &DagLayout::compute(&entries, false));
         assert_eq!(
             (siblings.lane_parent(1), siblings.lane_parent(2)),
             (Some(2), Some(3))

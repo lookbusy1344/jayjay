@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
@@ -33,6 +33,7 @@ pub struct Repo {
     pub(super) alias_maps_cache: RepoCache<AliasMaps>,
     pub(super) commit_tags_cache: RepoCache<CommitRefNames>,
     pub(super) commit_bookmarks_cache: RepoCache<CommitRefNames>,
+    pub(super) remote_ref_commits_cache: RepoCache<HashSet<CommitId>>,
     pub(super) commit_emptiness: CommitEmptiness,
     /// A changed-file count costs a full parent-tree diff; re-diff only workspaces whose working-copy commit moved.
     pub(super) workspace_files_changed_cache: RwLock<HashMap<String, (CommitId, u32)>>,
@@ -75,6 +76,7 @@ impl Repo {
             alias_maps_cache: RepoCache::default(),
             commit_tags_cache: RepoCache::default(),
             commit_bookmarks_cache: RepoCache::default(),
+            remote_ref_commits_cache: RepoCache::default(),
             commit_emptiness: CommitEmptiness::default(),
             workspace_files_changed_cache: RwLock::new(HashMap::new()),
             lfs_cache: Mutex::new(LfsCache::default()),
