@@ -48,7 +48,7 @@ impl RepoViewModel {
             cx,
             move |repo| repo.rebase(&rev, &dest),
             move |vm, rebased: &String, cx| {
-                vm.refresh_preferring(false, Some((change_id, rebased.clone())), cx)
+                vm.refresh_preferring(false, true, Some((change_id, rebased.clone())), cx)
             },
         );
         cx.spawn(async move |_, _| task.await.map(drop))

@@ -156,7 +156,14 @@ pub(super) fn sync_cluster(
         t,
         vec![
             revset_filter_button(revset_filter_active, focused, GroupEdge::Leading, t, cx),
-            refresh_button(activity.is_refreshing, focused, GroupEdge::Inner, t, cx),
+            refresh_button(
+                activity.is_refreshing,
+                activity.is_canceling_refresh,
+                focused,
+                GroupEdge::Inner,
+                t,
+                cx,
+            ),
             sync_button(
                 SyncAction::FetchOrigin,
                 activity.is_fetching,
@@ -214,11 +221,19 @@ pub(super) fn tools_cluster(
 
 fn refresh_button(
     is_refreshing: bool,
+    is_canceling: bool,
     focused: Option<FocusStop>,
     edge: GroupEdge,
     t: &Theme,
     cx: &mut Context<RepoWindow>,
 ) -> AnyElement {
+    let tooltip = if is_canceling {
+        "Cancelling…"
+    } else if is_refreshing {
+        "Cancel Update"
+    } else {
+        "Refresh"
+    };
     let content = div()
         .relative()
         .flex()
@@ -226,16 +241,16 @@ fn refresh_button(
         .justify_center()
         .w_full()
         .h_full()
-        .child(refresh_icon(is_refreshing, t));
+        .child(refresh_icon(is_refreshing && !is_canceling, t));
     focus_ring(
-        group_item("tb-refresh", "Refresh", edge, t),
+        group_item("tb-refresh", tooltip, edge, t),
         focused == Some(FocusStop::Refresh),
         t,
     )
     .debug_selector(|| "toolbar-refresh".to_owned())
     .on_click(cx.listener(|view, _ev: &ClickEvent, _w, cx| {
         let vm = view.vm.clone();
-        vm.update(cx, |vm, cx| vm.refresh(false, cx));
+        vm.update(cx, |vm, cx| vm.refresh_or_cancel(cx));
     }))
     .child(content)
     .into_any_element()

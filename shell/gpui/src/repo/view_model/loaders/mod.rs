@@ -2,13 +2,14 @@ mod diff;
 mod diff_compute;
 mod review_notes;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{Context, SharedString};
-use jayjay_core::dag::DagLayout;
 use jayjay_core::{
-    BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, GraphEntry, Repo,
+    BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, FIRST_RESULT_BUDGET,
+    GraphLoadToken, LogGraphEvent, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo,
     WorkspaceInfo, build_default_revset, default_revset_depth,
 };
 
@@ -87,12 +88,16 @@ impl RepoViewModel {
     }
 
     pub fn handle_working_copy_change(&mut self, cx: &mut Context<Self>) {
-        // A suspended event must survive even if a mutation stamps the echo window before the overlay closes.
-        if !self.refresh_suspended && self.is_internal_mutation_echo() {
+        // Gate before the echo check: an event remembered here must survive even if a mutation stamps the echo window before the overlay closes.
+        if self.refresh_suspended {
+            self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
             return;
         }
-        self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
-        self.resume_pending_refresh(cx);
+        // Ignore the FS echo from our own mutations — the mutation path already refreshed.
+        if self.is_internal_mutation_echo() {
+            return;
+        }
+        self.refresh(true, cx);
     }
 
     /// The owed refresh runs without an echo re-check: the deferred event was external when it arrived.
@@ -104,21 +109,22 @@ impl RepoViewModel {
         self.resume_pending_refresh(cx);
     }
 
-    /// The at-head check waits for in-flight work: that refresh is what moves the loaded repo to the head it compares against.
-    pub(crate) fn resume_pending_refresh(&mut self, cx: &mut Context<Self>) {
+    /// The at-head check waits for in-flight work: that refresh is what moves the loaded repo to the head it compares against. Returns whether it ran, so a caller can distinguish "resumed" from "still owed" (e.g. while suspended).
+    pub(crate) fn resume_pending_refresh(&mut self, cx: &mut Context<Self>) -> bool {
         if self.refresh_suspended || self.loading.refreshing {
-            return;
+            return false;
         }
         let Some(pending) = self.loading.pending_auto_refresh.take() else {
-            return;
+            return false;
         };
         if pending == PendingRefresh::CheckOperation
             && let Some(repo) = self.repo.as_ref()
             && repo.is_at_operation_head().unwrap_or(false)
         {
-            return;
+            return false;
         }
         self.refresh(true, cx);
+        true
     }
 
     pub(in crate::repo) fn is_internal_mutation_echo(&self) -> bool {
@@ -149,23 +155,37 @@ impl RepoViewModel {
     }
 
     pub fn refresh(&mut self, is_auto_triggered: bool, cx: &mut Context<Self>) {
+        self.refresh_with_working_copy_snapshot(is_auto_triggered, true, cx);
+    }
+
+    pub(super) fn refresh_with_working_copy_snapshot(
+        &mut self,
+        is_auto_triggered: bool,
+        snapshot_working_copy: bool,
+        cx: &mut Context<Self>,
+    ) {
         let selection = self
             .selected
             .and_then(|ix| self.graph.changes.get(ix))
             .map(|c| (c.change_id.id.clone(), c.commit_id.id.clone()));
-        self.refresh_preferring(is_auto_triggered, selection, cx);
+        self.refresh_preferring(is_auto_triggered, snapshot_working_copy, selection, cx);
     }
 
     /// `selection` is (change id, commit id): the commit wins, the change id is the fallback once a rewrite retired that commit.
     pub(super) fn refresh_preferring(
         &mut self,
         is_auto_triggered: bool,
+        snapshot_working_copy: bool,
         selection: Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
         // FS event mid-refresh: defer it and re-run from the completion so the user's latest write isn't lost.
         if is_auto_triggered && self.loading.refreshing {
             self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
+            // An external change makes the streaming snapshot stale; cancel the active session so the
+            // deferred refresh starts against fresh state instead of waiting for the whole stale
+            // stream to drain. The Canceled terminal event runs the pending refresh.
+            self.cancel_graph_session(cx);
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -176,54 +196,136 @@ impl RepoViewModel {
         if !is_auto_triggered {
             self.clear_error();
         }
+        // A manual refresh (e.g. a revset change) can reach here while an older session is still
+        // streaming; cancel it so it stops consuming CPU instead of running to completion unseen.
+        if let Some(old_token) = self.loading.graph_session.take() {
+            old_token.cancel();
+        }
         self.begin_refreshing(cx);
         self.loading.refresh_gen = self.loading.refresh_gen.wrapping_add(1);
         let generation = self.loading.refresh_gen;
         let revset = self.revset.to_string();
         let previous_selection = selection;
+        let token = GraphLoadToken::new();
+        self.loading.graph_session = Some(token.clone());
+        self.loading.graph_session_gen = Some(generation);
+        self.loading.graph_in_flight_generations.insert(generation);
+        self.loading.graph_session_canceling = false;
+        self.loading.graph_first_snapshot_applied = false;
+        self.loading.graph_load_slow = false;
+        self.loading.graph_paused = false;
+        let row_ceiling = self.effective_row_ceiling();
+        Self::delayed_update(cx, FIRST_RESULT_BUDGET, move |vm, cx| {
+            if vm.loading.refresh_gen == generation
+                && !vm.loading.graph_first_snapshot_applied
+                && vm.loading.graph_session.is_some()
+            {
+                vm.loading.graph_load_slow = true;
+                cx.notify();
+            }
+        });
 
-        Self::background_update(
+        Self::background_stream(
             cx,
-            async move { refresh_graph_blocking(&repo, &revset) },
-            move |vm, result, cx| {
-                vm.finish_repo_task(cx);
-                // A later refresh superseded this one; drop this stale result.
-                if vm.loading.refresh_gen != generation {
+            move |tx| {
+                let ancillary = refresh_ancillary_blocking(&repo, snapshot_working_copy);
+                let is_err = ancillary.is_err();
+                let _ = tx.send(RefreshUpdate::Ancillary(ancillary));
+                if is_err {
                     return;
                 }
-                // An overlay opened mid-flight: don't rewrite selection or detail under it; the gate owes a rerun on close.
-                if is_auto_triggered && vm.refresh_suspended {
-                    vm.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
-                    return;
-                }
-                // An FS event arrived after our snapshot, so this result may already be stale.
-                if vm.loading.pending_auto_refresh.is_some() {
-                    // A failed load may have left the repo behind the head, so its at-head answer proves nothing.
-                    if result.is_err() {
-                        vm.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
-                    }
-                    vm.resume_pending_refresh(cx);
-                    if vm.loading.refreshing {
-                        return;
-                    }
-                }
-                vm.apply_refresh_result(result, previous_selection, cx);
+                let request = LogGraphRequest {
+                    row_ceiling,
+                    ..LogGraphRequest::new(revset)
+                };
+                repo.start_log_graph(request, token, |event| {
+                    let _ = tx.send(RefreshUpdate::Graph(event));
+                });
+            },
+            move |vm, update, cx| {
+                vm.apply_refresh_update(
+                    update,
+                    is_auto_triggered,
+                    &previous_selection,
+                    generation,
+                    cx,
+                );
             },
         );
     }
 
-    fn apply_refresh_result(
+    /// Cancel any in-flight graph load session, or start one if none is running. Wired to the
+    /// toolbar refresh/cancel control so it never enqueues a second overlapping refresh.
+    pub fn refresh_or_cancel(&mut self, cx: &mut Context<Self>) {
+        if self.cancel_graph_session(cx) {
+            return;
+        }
+        self.refresh(false, cx);
+    }
+
+    /// Row ceiling for the next session, resolving the `0` sentinel to the core default.
+    fn effective_row_ceiling(&self) -> u32 {
+        if self.loading.graph_row_ceiling == 0 {
+            MAX_AUTO_LOADED_ROWS
+        } else {
+            self.loading.graph_row_ceiling
+        }
+    }
+
+    /// Resume the session paused at the row ceiling without restarting its repository graph stream.
+    pub fn continue_loading(&mut self, cx: &mut Context<Self>) {
+        if !self.loading.graph_paused {
+            return;
+        }
+        let Some(token) = self.loading.graph_session.clone() else {
+            return;
+        };
+        let row_ceiling = self.effective_row_ceiling().saturating_mul(2);
+        self.loading.graph_row_ceiling = row_ceiling;
+        self.loading.graph_paused = false;
+        self.begin_refreshing(cx);
+        self.loading
+            .graph_in_flight_generations
+            .insert(self.loading.refresh_gen);
+        token.continue_loading(row_ceiling);
+    }
+
+    /// Latch cancellation of the active graph session, if one is running. Returns whether a session
+    /// was present, so callers can distinguish "canceled the running load" from "nothing to cancel".
+    fn cancel_graph_session(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(token) = self.loading.graph_session.clone() else {
+            return false;
+        };
+        if !self.loading.graph_session_canceling {
+            token.cancel();
+            self.loading.graph_session_canceling = true;
+            cx.notify();
+        }
+        true
+    }
+
+    /// A write must never race a pinned graph snapshot. Invalidate its generation immediately so
+    /// any event already queued for the UI cannot overwrite mutation-era state; retain the token
+    /// until that worker's terminal event performs its own task bookkeeping.
+    pub(in crate::repo) fn cancel_graph_session_for_mutation(&mut self, cx: &mut Context<Self>) {
+        if self.cancel_graph_session(cx) {
+            self.loading.refresh_gen = self.loading.refresh_gen.wrapping_add(1);
+        }
+    }
+
+    fn apply_refresh_update(
         &mut self,
-        result: CoreResult<RefreshData>,
-        previous_selection: Option<(String, String)>,
+        update: RefreshUpdate,
+        is_auto_triggered: bool,
+        previous_selection: &Option<(String, String)>,
+        generation: u64,
         cx: &mut Context<Self>,
     ) {
-        match result {
-            Ok(data) => {
-                let entries = data.entries;
-                self.can_load_more = self
-                    .revset_depth()
-                    .is_some_and(|depth| entries.len() >= depth as usize);
+        match update {
+            RefreshUpdate::Ancillary(Ok(data)) => {
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
                 self.graph.bookmarks = Arc::new(data.bookmarks);
                 if let Some(workspaces) = data.workspaces {
                     self.graph.workspaces = Arc::new(workspaces);
@@ -231,43 +333,180 @@ impl RepoViewModel {
                 self.pr_host_name = data.pr_host_name.map(SharedString::from);
                 self.working_copy_stats = data.working_copy_stats;
                 self.current_operation_description = data.current_operation_description;
-                self.graph.dag_layout = Arc::new(DagLayout::compute(&entries));
-                let changes: Vec<ChangeInfo> = entries.iter().map(|e| e.change.clone()).collect();
-                let new_selected = previous_selection
-                    .as_ref()
-                    .and_then(|(_, commit_id)| {
-                        changes.iter().position(|c| &c.commit_id.id == commit_id)
-                    })
-                    .or_else(|| {
-                        previous_selection.as_ref().and_then(|(change_id, _)| {
-                            changes.iter().position(|c| &c.change_id.id == change_id)
-                        })
-                    })
-                    .or_else(|| changes.iter().position(|c| c.is_working_copy))
-                    .or(if changes.is_empty() { None } else { Some(0) });
-                self.graph.changes = Arc::new(changes);
-                self.graph.entries = Arc::new(entries);
-                // Re-select even if the index is unchanged — file contents may have.
-                if let Some(ix) = new_selected {
-                    // Keep the user's place in the file column across a background reload; mutation paths may have staked a restore target already.
-                    if self.pending_file_selection.is_none() {
-                        self.pending_file_selection = self
-                            .selected_file_ix
-                            .and_then(|file_ix| self.files.as_ref()?.get(file_ix))
-                            .map(|file| file.path.clone());
-                    }
-                    self.select_change(ix, cx);
-                } else {
-                    self.loading.change_gen = self.loading.change_gen.wrapping_add(1);
-                    self.loading.pr_gen = self.loading.pr_gen.wrapping_add(1);
-                    self.selected = None;
-                    self.selected_changes.clear();
-                    self.clear_detail_state();
-                    self.compare = None;
-                    self.pr_info = None;
+                cx.notify();
+            }
+            RefreshUpdate::Ancillary(Err(error)) => {
+                self.finish_graph_session(generation, cx);
+                if self.loading.refresh_gen == generation {
+                    self.present_error(error);
+                    cx.notify();
                 }
             }
-            Err(error) => self.present_error(error),
+            RefreshUpdate::Graph(LogGraphEvent::Snapshot(snapshot)) => {
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                self.apply_graph_snapshot(snapshot, previous_selection, cx);
+            }
+            RefreshUpdate::Graph(LogGraphEvent::Progress(progress)) => {
+                if self.loading.refresh_gen == generation
+                    && !self.loading.graph_first_snapshot_applied
+                    && progress.first_result_budget_expired
+                {
+                    self.loading.graph_load_slow = true;
+                    cx.notify();
+                }
+            }
+            RefreshUpdate::Graph(LogGraphEvent::EmptyStates(updates)) => {
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                self.apply_empty_states(&updates, cx);
+            }
+            RefreshUpdate::Graph(LogGraphEvent::Paused) => {
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                if self.loading.graph_in_flight_generations.remove(&generation) {
+                    self.finish_repo_task(cx);
+                }
+                // An owed refresh supersedes the paused prefix; otherwise expose Continue Loading.
+                if self.resume_pending_refresh(cx) {
+                    return;
+                }
+                self.loading.graph_paused = true;
+                cx.notify();
+            }
+            RefreshUpdate::Graph(LogGraphEvent::Finished) => {
+                self.finish_graph_session(generation, cx);
+                if self.loading.refresh_gen != generation {
+                    return;
+                }
+                if is_auto_triggered && self.refresh_suspended {
+                    self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
+                    return;
+                }
+                self.resume_pending_refresh(cx);
+            }
+            RefreshUpdate::Graph(LogGraphEvent::Canceled) => {
+                self.finish_graph_session(generation, cx);
+                // A stale-session cancel from an FS event leaves a deferred refresh owed; run it now
+                // against fresh state. A user-initiated cancel leaves no pending refresh, so this is
+                // inert. While suspended, keep it owed for `set_refresh_suspended` to run later.
+                if self.loading.refresh_gen == generation {
+                    self.resume_pending_refresh(cx);
+                }
+            }
+            RefreshUpdate::Graph(LogGraphEvent::Failed(error)) => {
+                self.finish_graph_session(generation, cx);
+                if self.loading.refresh_gen == generation {
+                    self.present_error(error);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Clears the session token and repo-task bookkeeping for `generation`'s terminal event,
+    /// regardless of whether `generation` is still current — every `begin_refreshing()` needs
+    /// exactly one matching `finish_repo_task()`, even for a superseded run.
+    fn finish_graph_session(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.loading.graph_in_flight_generations.remove(&generation) {
+            self.finish_repo_task(cx);
+        }
+        if self.loading.graph_session_gen == Some(generation) {
+            self.loading.graph_session = None;
+            self.loading.graph_session_gen = None;
+            self.loading.graph_session_canceling = false;
+            self.loading.more = false;
+            self.loading.graph_load_slow = false;
+        }
+    }
+
+    /// Applies one published graph prefix. The first snapshot of a session restores selection from
+    /// `previous_selection`; later snapshots only append rows, since a session's prefixes share a
+    /// stable ordering and never renumber an already-published row.
+    fn apply_graph_snapshot(
+        &mut self,
+        snapshot: LogGraphSnapshot,
+        previous_selection: &Option<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_first = !self.loading.graph_first_snapshot_applied;
+        self.loading.graph_first_snapshot_applied = true;
+        self.loading.graph_load_slow = false;
+
+        if snapshot.is_complete {
+            self.can_load_more = self
+                .revset_depth()
+                .is_some_and(|depth| snapshot.entries.len() >= depth as usize);
+        }
+        self.graph.dag_layout = Arc::new(snapshot.layout);
+        let changes: Vec<ChangeInfo> = snapshot.entries.iter().map(|e| e.change.clone()).collect();
+
+        if !is_first {
+            self.graph.changes = Arc::new(changes);
+            self.graph.entries = Arc::new(snapshot.entries);
+            cx.notify();
+            return;
+        }
+
+        let new_selected = previous_selection
+            .as_ref()
+            .and_then(|(_, commit_id)| changes.iter().position(|c| &c.commit_id.id == commit_id))
+            .or_else(|| {
+                previous_selection.as_ref().and_then(|(change_id, _)| {
+                    changes.iter().position(|c| &c.change_id.id == change_id)
+                })
+            })
+            .or_else(|| changes.iter().position(|c| c.is_working_copy))
+            .or(if changes.is_empty() { None } else { Some(0) });
+        self.graph.changes = Arc::new(changes);
+        self.graph.entries = Arc::new(snapshot.entries);
+        // Re-select even if the index is unchanged — file contents may have.
+        if let Some(ix) = new_selected {
+            // Keep the user's place in the file column across a background reload; mutation paths may have staked a restore target already.
+            if self.pending_file_selection.is_none() {
+                self.pending_file_selection = self
+                    .selected_file_ix
+                    .and_then(|file_ix| self.files.as_ref()?.get(file_ix))
+                    .map(|file| file.path.clone());
+            }
+            self.select_change(ix, cx);
+        } else {
+            self.loading.change_gen = self.loading.change_gen.wrapping_add(1);
+            self.loading.pr_gen = self.loading.pr_gen.wrapping_add(1);
+            self.selected = None;
+            self.selected_changes.clear();
+            self.clear_detail_state();
+            self.compare = None;
+            self.pr_info = None;
+        }
+        cx.notify();
+    }
+
+    /// Apply a batch of deferred `is_empty` corrections to the already-published rows. Merge and
+    /// off-page rows are published as non-empty; these refine them once their parent-tree merge
+    /// completes off the first-paint path.
+    fn apply_empty_states(
+        &mut self,
+        updates: &[jayjay_core::EmptyStateUpdate],
+        cx: &mut Context<Self>,
+    ) {
+        if updates.is_empty() {
+            return;
+        }
+        let corrections: HashMap<&str, bool> = updates
+            .iter()
+            .map(|update| (update.commit_id.as_str(), update.is_empty))
+            .collect();
+        let entries = Arc::make_mut(&mut self.graph.entries);
+        let changes = Arc::make_mut(&mut self.graph.changes);
+        for (entry, change) in entries.iter_mut().zip(changes.iter_mut()) {
+            if let Some(&is_empty) = corrections.get(entry.change.commit_id.id.as_str()) {
+                entry.change.is_empty = is_empty;
+                change.is_empty = is_empty;
+            }
         }
         cx.notify();
     }
@@ -280,6 +519,8 @@ impl RepoViewModel {
             trimmed.to_owned().into()
         };
         self.can_load_more = false;
+        // A new revset is a fresh query; drop any raised Continue Loading ceiling.
+        self.loading.graph_row_ceiling = 0;
         self.refresh(false, cx);
     }
 
@@ -314,8 +555,14 @@ impl RepoViewModel {
     }
 }
 
-struct RefreshData {
-    entries: Vec<GraphEntry>,
+/// One item flowing back from a refresh's background thread: the ancillary read (once, first),
+/// then the graph session's events, in that order.
+enum RefreshUpdate {
+    Ancillary(CoreResult<AncillaryRefreshData>),
+    Graph(LogGraphEvent),
+}
+
+struct AncillaryRefreshData {
     bookmarks: Vec<BookmarkInfo>,
     workspaces: Option<Vec<WorkspaceInfo>>,
     pr_host_name: Option<String>,
@@ -323,16 +570,19 @@ struct RefreshData {
     current_operation_description: String,
 }
 
-fn refresh_graph_blocking(repo: &Repo, revset: &str) -> CoreResult<RefreshData> {
-    repo.refresh_working_copy()?;
-    let entries = repo.log_graph(revset)?;
+fn refresh_ancillary_blocking(
+    repo: &Repo,
+    snapshot_working_copy: bool,
+) -> CoreResult<AncillaryRefreshData> {
+    if snapshot_working_copy {
+        repo.refresh_working_copy()?;
+    }
     let bookmarks = repo.list_bookmarks().unwrap_or_default();
     let workspaces = repo.workspace_list().ok();
     let pr_host_name = repo.pr_host_name();
     let working_copy_stats = repo.diff_stats("@").ok();
     let current_operation_description = repo.current_operation_description();
-    Ok(RefreshData {
-        entries,
+    Ok(AncillaryRefreshData {
         bookmarks,
         workspaces,
         pr_host_name,

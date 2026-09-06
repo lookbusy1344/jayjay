@@ -4184,6 +4184,7 @@ dependencies = [
  "directories",
  "flume",
  "font-kit",
+ "futures 0.3.34",
  "gpui",
  "gpui_platform",
  "hex",

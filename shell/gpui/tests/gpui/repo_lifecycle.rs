@@ -1,5 +1,5 @@
 use std::fs;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::harness::*;
 use gpui::{AppContext, Modifiers, TestAppContext, VisualTestContext};
@@ -8,6 +8,36 @@ use jayjay_gpui::repo::RepoWindow;
 use jayjay_gpui::repo::view_model::{PendingRefresh, RepoViewModel};
 use jayjay_gpui::windows::repo_list::RepoListWindow;
 use jj_test::{LinearFixture, run_jj_in};
+
+const ASYNC_UPDATE_POLL_LIMIT: usize = 1_000;
+const ASYNC_UPDATE_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+fn run_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
+    for _ in 0..ASYNC_UPDATE_POLL_LIMIT {
+        cx.executor().advance_clock(ASYNC_UPDATE_POLL_INTERVAL);
+        while cx.executor().tick() {}
+        if condition(cx) {
+            return;
+        }
+        std::thread::sleep(ASYNC_UPDATE_POLL_INTERVAL);
+    }
+    panic!("condition did not become true");
+}
+
+fn run_visual_until(
+    cx: &mut VisualTestContext,
+    mut condition: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    for _ in 0..ASYNC_UPDATE_POLL_LIMIT {
+        cx.cx.executor().advance_clock(ASYNC_UPDATE_POLL_INTERVAL);
+        cx.run_until_parked();
+        if condition(cx) {
+            return;
+        }
+        std::thread::sleep(ASYNC_UPDATE_POLL_INTERVAL);
+    }
+    panic!("condition did not become true");
+}
 
 #[gpui::test]
 fn invalid_repo_can_be_initialized(cx: &mut TestAppContext) {
@@ -109,6 +139,7 @@ fn repo_opens_off_the_main_thread(cx: &mut TestAppContext) {
     });
 
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert!(
@@ -144,6 +175,7 @@ fn manual_refresh_snapshots_working_copy(cx: &mut TestAppContext) {
 
     vm.update(cx, |vm, cx| vm.refresh(false, cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert!(vm.error.is_none(), "refresh errored: {:?}", vm.error);
@@ -169,6 +201,7 @@ fn refresh_updates_status_bar_snapshot(cx: &mut TestAppContext) {
 
     vm.update(cx, |vm, cx| vm.refresh(false, cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         let stats = vm
@@ -188,9 +221,13 @@ fn status_bar_renders_swiftui_style_items(cx: &mut TestAppContext) {
     let fixture = LinearFixture::build();
     fixture.add_tracked_working_copy_edits();
     install_test_globals(cx);
-    let (_view, cx) = cx.add_window_view(|_, cx| RepoWindow::new(fixture.path.clone(), cx));
+    let (view, cx) = cx.add_window_view(|_, cx| RepoWindow::new(fixture.path.clone(), cx));
     let cx: &mut VisualTestContext = cx;
+    view.update_in(cx, |view, _, cx| {
+        view.view_model().update(cx, |vm, cx| vm.refresh(false, cx));
+    });
     settle_visual(cx);
+    run_visual_until(cx, |cx| cx.debug_bounds("status-wc-stat").is_some());
 
     assert!(cx.debug_bounds("status-path").is_some());
     assert!(cx.debug_bounds("status-wc-stat").is_some());
@@ -210,6 +247,7 @@ fn boot_snapshots_small_working_copy(cx: &mut TestAppContext) {
 
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert!(vm.error.is_none(), "boot errored: {:?}", vm.error);
@@ -234,6 +272,7 @@ fn fs_change_refreshes_while_reviewing_working_copy(cx: &mut TestAppContext) {
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
     fs::write(fixture.path.join("late-edit.txt"), "refresh me\n")
         .expect("write late working-copy edit");
 
@@ -249,6 +288,7 @@ fn fs_change_refreshes_while_reviewing_working_copy(cx: &mut TestAppContext) {
         );
     });
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert!(
@@ -279,6 +319,11 @@ fn fs_event_mid_refresh_is_not_dropped(cx: &mut TestAppContext) {
     });
 
     settle(cx);
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            !vm.loading.refreshing && vm.loading.pending_auto_refresh.is_none()
+        })
+    });
 
     vm.read_with(cx, |vm, _| {
         assert!(!vm.loading.refreshing, "refresh should finish");
@@ -288,6 +333,126 @@ fn fs_event_mid_refresh_is_not_dropped(cx: &mut TestAppContext) {
         );
         assert!(vm.error.is_none(), "re-run errored: {:?}", vm.error);
     });
+}
+
+#[gpui::test]
+fn fs_event_mid_graph_session_cancels_the_stale_stream_then_reruns(cx: &mut TestAppContext) {
+    install_test_globals(cx);
+    let fixture = LinearFixture::build();
+    let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
+    vm.update(cx, |vm, cx| vm.boot(cx));
+    settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
+
+    vm.update(cx, |vm, cx| {
+        // Start a graph session, then fire an FS event before it can stream to completion.
+        vm.refresh(false, cx);
+        assert!(vm.loading.refreshing, "refresh should start a session");
+        assert!(
+            !vm.loading.graph_session_canceling,
+            "a fresh session is not canceling"
+        );
+        vm.handle_working_copy_change(cx);
+        assert!(
+            vm.loading.graph_session_canceling,
+            "an FS event mid-session must latch cancellation of the stale stream"
+        );
+        assert!(
+            vm.loading.pending_auto_refresh.is_some(),
+            "and record the owed replacement refresh"
+        );
+    });
+    settle(cx);
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            !vm.loading.refreshing && vm.loading.pending_auto_refresh.is_none()
+        })
+    });
+
+    vm.read_with(cx, |vm, _| {
+        assert!(
+            !vm.loading.refreshing,
+            "the replacement refresh should finish"
+        );
+        assert!(
+            vm.loading.pending_auto_refresh.is_none(),
+            "the owed refresh must be consumed"
+        );
+        assert!(
+            !vm.loading.graph_session_canceling,
+            "cancellation state clears once the terminal event lands"
+        );
+        assert!(vm.error.is_none(), "rerun errored: {:?}", vm.error);
+        assert!(
+            !vm.graph.changes.is_empty(),
+            "the replacement session should repopulate the graph"
+        );
+    });
+}
+
+#[gpui::test]
+fn row_ceiling_pauses_the_load_and_continue_loads_more(cx: &mut TestAppContext) {
+    install_test_globals(cx);
+    let fixture = LinearFixture::build();
+    for i in 0..30 {
+        run_jj_in(&fixture.path, &["new", "-m", &format!("extra {i}")]);
+    }
+    let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
+    vm.update(cx, |vm, cx| vm.boot(cx));
+    settle(cx);
+
+    // Load an explicit large revset, then re-run it against a ceiling below its size.
+    vm.update(cx, |vm, cx| vm.apply_revset("all()", cx));
+    settle(cx);
+    vm.update(cx, |vm, cx| {
+        vm.loading.graph_row_ceiling = 4;
+        vm.refresh(false, cx);
+    });
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| vm.loading.graph_paused));
+
+    let rows_at_pause = vm.read_with(cx, |vm, _| {
+        assert!(
+            vm.loading.graph_paused,
+            "a ceiling below the revset size must pause the load"
+        );
+        assert_eq!(
+            vm.graph.changes.len(),
+            4,
+            "the pause publishes exactly the ceiling"
+        );
+        vm.graph.changes.len()
+    });
+    vm.update(cx, |vm, cx| vm.select_change(1, cx));
+    let selected_commit = vm.read_with(cx, |vm, _| {
+        vm.selected_change()
+            .expect("published row can be selected while paused")
+            .commit_id
+            .id
+            .clone()
+    });
+
+    vm.update(cx, |vm, cx| vm.continue_loading(cx));
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            vm.loading.graph_paused && vm.graph.changes.len() > rows_at_pause
+        })
+    });
+
+    vm.read_with(cx, |vm, _| {
+        assert!(
+            vm.graph.changes.len() > rows_at_pause,
+            "continue loading must extend the graph past the previous ceiling"
+        );
+        assert_eq!(
+            vm.selected_change()
+                .map(|change| change.commit_id.id.as_str()),
+            Some(selected_commit.as_str()),
+            "a later cumulative snapshot must preserve the selected commit"
+        );
+        assert!(vm.error.is_none(), "continue errored: {:?}", vm.error);
+    });
+    vm.update(cx, |vm, cx| vm.refresh_or_cancel(cx));
+    settle(cx);
 }
 
 #[gpui::test]
@@ -380,6 +545,13 @@ fn op_head_event_is_dropped_only_while_the_repo_is_at_head(cx: &mut TestAppConte
         );
     });
     settle(cx);
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            vm.files
+                .as_ref()
+                .is_some_and(|files| files.iter().any(|file| file.path == "late-edit.txt"))
+        })
+    });
     vm.read_with(cx, |vm, _| {
         assert!(
             vm.files
@@ -397,6 +569,7 @@ fn suspended_fs_event_is_remembered_and_runs_when_the_gate_clears(cx: &mut TestA
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.update(cx, |vm, cx| {
         vm.set_refresh_suspended(true, cx);
@@ -413,6 +586,7 @@ fn suspended_fs_event_is_remembered_and_runs_when_the_gate_clears(cx: &mut TestA
         );
     });
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 }
 
 #[gpui::test]
@@ -422,6 +596,7 @@ fn overlay_opening_mid_refresh_defers_the_apply(cx: &mut TestAppContext) {
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.update(cx, |vm, cx| {
         vm.refresh(true, cx);
@@ -429,6 +604,11 @@ fn overlay_opening_mid_refresh_defers_the_apply(cx: &mut TestAppContext) {
         vm.set_refresh_suspended(true, cx);
     });
     settle(cx);
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            !vm.loading.refreshing && vm.loading.pending_auto_refresh.is_some()
+        })
+    });
 
     vm.read_with(cx, |vm, _| {
         assert!(!vm.loading.refreshing, "the in-flight refresh completes");
@@ -440,6 +620,11 @@ fn overlay_opening_mid_refresh_defers_the_apply(cx: &mut TestAppContext) {
 
     vm.update(cx, |vm, cx| vm.set_refresh_suspended(false, cx));
     settle(cx);
+    run_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            vm.loading.pending_auto_refresh.is_none() && !vm.loading.refreshing
+        })
+    });
     vm.read_with(cx, |vm, _| {
         assert!(vm.loading.pending_auto_refresh.is_none());
         assert!(!vm.loading.refreshing);
@@ -454,6 +639,7 @@ fn auto_refresh_keeps_the_selected_file(cx: &mut TestAppContext) {
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     let file_ix = vm.read_with(cx, |vm, _| {
         let files = vm.files.as_ref().expect("boot loads the WC file list");
@@ -465,6 +651,7 @@ fn auto_refresh_keeps_the_selected_file(cx: &mut TestAppContext) {
 
     vm.update(cx, |vm, cx| vm.refresh(true, cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         let files = vm.files.as_ref().expect("files after refresh");
@@ -490,6 +677,7 @@ fn overlapping_refreshes_keep_the_gate_until_all_finish(cx: &mut TestAppContext)
     });
 
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert_eq!(
@@ -521,6 +709,7 @@ fn load_more_shows_refresh_indicator(cx: &mut TestAppContext) {
     });
 
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.more));
 
     vm.read_with(cx, |vm, _| {
         assert!(!vm.loading.more);
@@ -535,6 +724,7 @@ fn an_operation_refreshes_the_workspace_list_while_reviewing_working_copy(cx: &m
     let vm = cx.new(|_| RepoViewModel::new(fixture.path.clone()));
     vm.update(cx, |vm, cx| vm.boot(cx));
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
     let sibling = fixture
         .path
         .parent()
@@ -562,6 +752,7 @@ fn an_operation_refreshes_the_workspace_list_while_reviewing_working_copy(cx: &m
         );
     });
     settle(cx);
+    run_until(cx, |cx| vm.read_with(cx, |vm, _| !vm.loading.refreshing));
 
     vm.read_with(cx, |vm, _| {
         assert!(
