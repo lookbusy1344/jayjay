@@ -4260,6 +4260,7 @@ dependencies = [
  "jayjay-review",
  "pollster 1.0.1",
  "thiserror 2.0.20",
+ "tracing",
  "uniffi",
 ]
 

@@ -29,3 +29,42 @@ pub fn debug_render_log_graph_ascii(
     let inputs = entries.iter().map(DagLayoutInput::from).collect::<Vec<_>>();
     renderdag::render_ascii_unprojected(&inputs, synthetic_elided_nodes)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::types::{
+        ChangeInfo, CommitAuthor, EdgeType, GraphEdge, GraphEntry, NewChangeEligibility, ShortId,
+    };
+
+    pub(super) fn entry(commit_id: &str, parents: &[&str]) -> GraphEntry {
+        GraphEntry {
+            change: ChangeInfo {
+                change_id: ShortId::new(format!("change-{commit_id}"), 1),
+                commit_id: ShortId::new(commit_id.to_owned(), 1),
+                description: String::new(),
+                author: CommitAuthor::empty(0),
+                parents: parents.iter().map(|id| (*id).to_owned()).collect(),
+                bookmarks: Vec::new(),
+                tags: Vec::new(),
+                workspaces: Vec::new(),
+                is_working_copy: false,
+                has_conflict: false,
+                is_empty: false,
+                is_immutable: false,
+                is_divergent: false,
+                new_change: NewChangeEligibility {
+                    on_top: true,
+                    before: true,
+                    after: true,
+                },
+            },
+            edges: parents
+                .iter()
+                .map(|target| GraphEdge {
+                    target: (*target).to_owned(),
+                    edge_type: EdgeType::Direct,
+                })
+                .collect(),
+        }
+    }
+}
