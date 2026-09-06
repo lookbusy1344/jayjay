@@ -8,3 +8,4 @@ mod review_notes;
 mod revset;
 
 pub(crate) use refresh::BackgroundSnapshotFailed;
+pub(super) use refresh::snapshot_reporting_stale;

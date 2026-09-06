@@ -63,7 +63,14 @@ impl Render for RepoWindow {
         self.sync_diff_stack(cx);
         let t = crate::app::theme::theme_for_window(window, cx).clone();
         let (_, file_column_width) = self.layout.fitted(self.layout.viewport_width);
-        let (toolbar_repo, bookmarks, workspaces, is_refreshing, refresh_mode) = {
+        let (
+            toolbar_repo,
+            bookmarks,
+            workspaces,
+            is_refreshing,
+            is_canceling_refresh,
+            refresh_mode,
+        ) = {
             let vm = self.vm.read(cx);
             let bookmarks = vm.graph.bookmarks.clone();
             let workspaces = vm.graph.workspaces.clone();
@@ -80,12 +87,14 @@ impl Render for RepoWindow {
                 bookmarks,
                 workspaces,
                 vm.loading.refresh_indicator,
+                vm.loading.graph_session_canceling,
                 vm.refresh_mode(),
             )
         };
         let activity = ToolbarActivity {
             is_refreshing,
             refresh: refresh_mode,
+            is_canceling_refresh,
             is_fetching: self.sync_activity.is_fetching(),
             is_pushing: self.sync_activity.is_pushing(),
         };

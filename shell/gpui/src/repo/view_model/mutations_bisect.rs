@@ -162,7 +162,7 @@ fn release_bisect_on_failure<T: 'static>(
 
 fn show_bisect(vm: &mut RepoViewModel, state: &BisectState, cx: &mut Context<RepoViewModel>) {
     vm.bisect.state = Some(state.clone());
-    vm.refresh_preferring(false, bisect_refresh_target(state), cx);
+    vm.refresh_preferring(false, true, bisect_refresh_target(state), cx);
 }
 
 fn bisect_refresh_target(state: &BisectState) -> Option<(String, String)> {

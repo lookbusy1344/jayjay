@@ -144,6 +144,7 @@ pub(super) fn sync_cluster(
         vec![
             refresh_button(
                 activity.is_refreshing,
+                activity.is_canceling_refresh,
                 activity.refresh,
                 focused,
                 GroupEdge::Leading,
@@ -228,12 +229,20 @@ pub(crate) fn operation_log_toggle(
 
 fn refresh_button(
     is_refreshing: bool,
+    is_canceling: bool,
     mode: RefreshMode,
     focused: Option<FocusStop>,
     edge: GroupEdge,
     t: &Theme,
     cx: &mut Context<RepoWindow>,
 ) -> AnyElement {
+    let tooltip = if is_canceling {
+        jayjay_i18n::repo::cancelling()
+    } else if is_refreshing {
+        jayjay_i18n::repo::cancel_update()
+    } else {
+        mode.tooltip()
+    };
     let mut content = div()
         .relative()
         .flex()
@@ -241,7 +250,7 @@ fn refresh_button(
         .justify_center()
         .w_full()
         .h_full()
-        .child(refresh_icon(is_refreshing, t));
+        .child(refresh_icon(is_refreshing && !is_canceling, t));
     if mode.shows_badge() {
         content = content.child(
             div()
@@ -255,13 +264,13 @@ fn refresh_button(
         );
     }
     focus_ring(
-        group_item("tb-refresh", mode.tooltip(), edge, t),
+        group_item("tb-refresh", tooltip, edge, t),
         focused == Some(FocusStop::Refresh),
         t,
     )
     .debug_selector(|| "toolbar-refresh".to_owned())
     .on_click(cx.listener(|view, _ev: &ClickEvent, _w, cx| {
-        view.vm.update(cx, |vm, cx| vm.run_refresh(cx));
+        view.vm.update(cx, |vm, cx| vm.refresh_or_cancel(cx));
     }))
     .child(content)
     .into_any_element()
