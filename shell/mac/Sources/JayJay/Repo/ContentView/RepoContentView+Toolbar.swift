@@ -14,16 +14,21 @@ extension RepoContentView {
             .accessibilityIdentifier(AID.Toolbar.sidebarToggle)
             toolbarButton(
                 .refresh,
-                help: viewModel.refreshMode.help,
-                action: { viewModel.runRefresh() },
+                help: viewModel.isRefreshingInFlight
+                    ? "\(viewModel.graphLoadActionLabel) (\(AppShortcut.refresh.symbol))"
+                    : viewModel.refreshMode.help,
+                action: { viewModel.refreshOrCancel() },
                 label: {
-                    RefreshSpinner(animating: viewModel.isRefreshingInFlight || isSwitchingWorkspace)
-                        .overlay(alignment: .topTrailing) {
-                            if viewModel.refreshMode.showsBadge {
-                                Circle().fill(.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
-                                    .accessibilityIdentifier(AID.Toolbar.staleBadge)
-                            }
+                    RefreshSpinner(
+                        animating: viewModel.isRefreshingInFlight || isSwitchingWorkspace,
+                        label: viewModel.graphLoadActionLabel
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        if viewModel.refreshMode.showsBadge {
+                            Circle().fill(.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                                .accessibilityIdentifier(AID.Toolbar.staleBadge)
                         }
+                    }
                 }
             )
             .keyboardShortcut(AppShortcut.refresh)
