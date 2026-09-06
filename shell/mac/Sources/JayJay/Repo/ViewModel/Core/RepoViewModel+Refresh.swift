@@ -1,17 +1,31 @@
 import Foundation
 import JayJayCore
 
-private struct RepoRefreshContent {
-    let graph: GraphWithLayout
+private struct RepoRefreshAncillary {
+    let context: RepoRefreshContext
     let selectedChange: ChangeDetail?
-    let workingCopyChangeId: String
-    let workingCopyDescription: String
-    let context: RepoRefreshContext?
 }
 
 enum BackgroundRefreshRequest {
     case checkOperation
     case reload
+}
+
+struct RepoGraphRefreshContext: Sendable {
+    let generation: UInt64
+    let preferredCommitId: String?
+    let preferredRev: String?
+    let revset: String
+    let isAutoTriggered: Bool
+}
+
+private struct RepoGraphRefreshRun: Sendable {
+    let context: RepoGraphRefreshContext
+    let snapshotWorkingCopy: Bool
+    let includeSubmoduleStatuses: Bool
+    let token: JayJayGraphLoadToken
+    let observer: MainActorLogGraphObserver
+    let request: LogGraphRequest
 }
 
 extension RepoViewModel {
@@ -22,14 +36,16 @@ extension RepoViewModel {
 
     func handleWorkingCopyChange() {
         guard !isShuttingDown else { return }
-        // Editing defers events even within the mutation echo window.
-        if !isBackgroundRefreshSuspended,
-           let last = lastInternalMutationAt, Date().timeIntervalSince(last) < 5
-        {
+        // Remember an event while editing even if a mutation also stamped the echo window; resume without re-checking the stamp once editing ends.
+        if isBackgroundRefreshSuspended {
+            pendingBackgroundRefresh = .reload
             return
         }
-        pendingBackgroundRefresh = .reload
-        resumePendingBackgroundRefresh()
+        // Ignore the FS echo from our own mutations — perform() already refreshed.
+        if let last = lastInternalMutationAt, Date().timeIntervalSince(last) < 5 {
+            return
+        }
+        refresh(isAutoTriggered: true)
     }
 
     func setBackgroundRefreshSuspended(_ suspended: Bool) {
@@ -62,7 +78,8 @@ extension RepoViewModel {
 
     func applyRevset(_ newRevset: String, selecting revision: String = "@") {
         revset = newRevset
-        canLoadMore = Self.canLoadMore(revset: newRevset, loadedCount: graphEntries.count)
+        graphRowCeiling = 0
+        graphPaused = false
         refresh(selecting: revision)
     }
 
@@ -72,113 +89,113 @@ extension RepoViewModel {
         snapshotWorkingCopy: Bool = true
     ) {
         guard !isShuttingDown else { return }
+        // Don't pile FS-triggered refreshes on an in-flight one — our own refreshWorkingCopy re-fires the watcher.
         if isAutoTriggered, isRefreshingInFlight {
             pendingBackgroundRefresh = .reload
+            cancelGraphLoad()
             return
         }
         refreshTask?.cancel()
+        graphLoadToken?.cancel()
+        graphLoadSlowTask?.cancel()
+        graphRefreshGeneration &+= 1
+        let generation = graphRefreshGeneration
         isRefreshingInFlight = true
         isLoading = graphEntries.isEmpty
+        graphLoadCanceling = false
+        graphLoadSlow = false
+        graphPaused = false
+        graphFirstSnapshotApplied = false
+        graphPendingSelectedChange = nil
+        canLoadMore = false
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
         if !isAutoTriggered {
             error = nil
         }
-        let currentSelection = selectedChangeId
-        let requestedRevset = revset
-        let includeSubmoduleStatuses = includeSubmoduleStatuses
-        let shouldLoadBeforeSnapshot = graphEntries.isEmpty && snapshotWorkingCopy
-        // A requested revision wins the first pass; later passes preserve subsequent user selections.
-        var selectionBaseline = preferredRev == nil ? selectedChangeIds : nil
-        let repo = repo
-        let load = { includeContext in
-            try Self.loadRefreshContent(
-                repo: repo,
-                revset: requestedRevset,
-                preferredRev: preferredRev ?? currentSelection,
-                includeSubmoduleStatuses: includeSubmoduleStatuses,
-                includeContext: includeContext
-            )
-        }
-        refreshTask = startRepoTask { [weak self, repo] in
-            do {
-                if shouldLoadBeforeSnapshot {
-                    let content = try load(false)
-                    guard !Task.isCancelled else { return }
-                    selectionBaseline = await self?.applyRefreshContent(
-                        content,
-                        revset: requestedRevset,
-                        isAutoTriggered: isAutoTriggered,
-                        selectionBaseline: selectionBaseline
-                    )
-                }
-
-                if snapshotWorkingCopy {
-                    try repo.refreshWorkingCopy()
-                    guard !Task.isCancelled else { return }
-                }
-
-                let content = try load(true)
-                guard !Task.isCancelled else { return }
-                await self?.applyRefreshContent(
-                    content,
-                    revset: requestedRevset,
-                    isAutoTriggered: isAutoTriggered,
-                    selectionBaseline: selectionBaseline
-                )
-            } catch {
-                guard !Task.isCancelled else { return }
-                // A failed snapshot must still populate the context omitted from the first paint.
-                let context = shouldLoadBeforeSnapshot ? try? RepoRefreshContext(repo: repo) : nil
-                await self?.applyRefreshFailure(error, presence: repo.workspacePresence(), context: context)
-            }
-        }
-    }
-
-    @MainActor
-    @discardableResult
-    private func applyRefreshContent(
-        _ content: RepoRefreshContent,
-        revset: String,
-        isAutoTriggered: Bool,
-        selectionBaseline: [String]?
-    ) -> [String]? {
-        guard !Task.isCancelled, !isShuttingDown else { return selectionBaseline }
-        let isRefreshComplete = content.context != nil
-        if isAutoTriggered, isBackgroundRefreshSuspended {
-            pendingBackgroundRefresh = .reload
-            if isRefreshComplete {
-                isRefreshingInFlight = false
-            }
-            return selectionBaseline
-        }
-        let selectsLoadedChange = selectionBaseline == nil || selectionBaseline == selectedChangeIds
-        apply(content, selectsLoadedChange: selectsLoadedChange)
-        canLoadMore = Self.canLoadMore(
+        let preferredSelection = preferredRev ?? selectedChangeId
+        let preferredCommitId = graphEntries.first(where: {
+            guard let preferredSelection else { return false }
+            return $0.change.matchesRevision(preferredSelection)
+        })?.change.commitId.id
+        let context = RepoGraphRefreshContext(
+            generation: generation,
+            preferredCommitId: preferredCommitId,
+            preferredRev: preferredSelection,
             revset: revset,
-            loadedCount: content.graph.entries.count
+            isAutoTriggered: isAutoTriggered
         )
-        let baseline = selectsLoadedChange ? selectedChangeIds : selectionBaseline
-        guard isRefreshComplete else { return baseline }
-        isRefreshingInFlight = false
-        fetchPrInfo(bookmarks: selectedChange?.info.bookmarks ?? [])
-        resumePendingBackgroundRefresh()
-        return baseline
+        let token = JayJayGraphLoadToken()
+        graphLoadToken = token
+        graphLoadGeneration = generation
+        let request = Self.graphRequest(revset: context.revset, rowCeiling: graphRowCeiling)
+        graphLoadSlowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int64(clamping: request.firstResultBudgetMs)))
+            guard !Task.isCancelled,
+                  let self,
+                  graphRefreshGeneration == generation,
+                  !self.graphFirstSnapshotApplied,
+                  graphLoadToken != nil
+            else { return }
+            graphLoadSlow = true
+        }
+        let observer = MainActorLogGraphObserver { [weak self] event in
+            self?.applyLogGraphEvent(event, context: context)
+        }
+        startGraphRefresh(RepoGraphRefreshRun(
+            context: context,
+            snapshotWorkingCopy: snapshotWorkingCopy,
+            includeSubmoduleStatuses: includeSubmoduleStatuses,
+            token: token,
+            observer: observer,
+            request: request
+        ))
+    }
+
+    private func startGraphRefresh(_ run: RepoGraphRefreshRun) {
+        refreshTask = startRepoTask { [weak self, repo] in
+            await withTaskCancellationHandler {
+                do {
+                    if run.snapshotWorkingCopy {
+                        try repo.refreshWorkingCopy()
+                    }
+                    guard !Task.isCancelled else {
+                        await self?.finishCanceledGraphLoad(generation: run.context.generation)
+                        return
+                    }
+                    let ancillary = try Self.loadRefreshAncillary(
+                        repo: repo,
+                        preferredRev: run.context.preferredRev ?? "@",
+                        includeSubmoduleStatuses: run.includeSubmoduleStatuses
+                    )
+                    guard !Task.isCancelled else {
+                        await self?.finishCanceledGraphLoad(generation: run.context.generation)
+                        return
+                    }
+                    await self?.applyRefreshAncillary(ancillary, generation: run.context.generation)
+                    guard !Task.isCancelled else {
+                        await self?.finishCanceledGraphLoad(generation: run.context.generation)
+                        return
+                    }
+                    repo.startLogGraph(request: run.request, token: run.token, observer: run.observer)
+                } catch {
+                    guard !Task.isCancelled else {
+                        await self?.finishCanceledGraphLoad(generation: run.context.generation)
+                        return
+                    }
+                    let presence = repo.workspacePresence()
+                    await self?.applyGraphLoadFailure(error, presence: presence, generation: run.context.generation)
+                }
+            } onCancel: {
+                run.token.cancel()
+            }
+        }
     }
 
     @MainActor
-    private func apply(_ content: RepoRefreshContent, selectsLoadedChange: Bool = true) {
-        setGraph(content.graph.entries, graph: content.graph)
-        if let context = content.context {
-            apply(context)
-        }
-        if selectsLoadedChange {
-            applySingleSelectedChange(content.selectedChange)
-        }
-        applyWorkingCopy(
-            changeId: content.workingCopyChangeId,
-            description: content.workingCopyDescription
-        )
-        isLoading = false
+    private func applyRefreshAncillary(_ ancillary: RepoRefreshAncillary, generation: UInt64) {
+        guard !isShuttingDown, graphRefreshGeneration == generation else { return }
+        apply(ancillary.context)
+        graphPendingSelectedChange = ancillary.selectedChange
     }
 
     @MainActor
@@ -191,65 +208,97 @@ extension RepoViewModel {
         apply(context.statusBar)
     }
 
-    func loadMore() {
-        guard !isShuttingDown, canLoadMore, let currentDepth = Self.defaultRevsetDepth(for: revset) else { return }
+    @MainActor
+    func applyGraphSnapshot(
+        _ snapshot: LogGraphSnapshot,
+        preferredCommitId: String?,
+        preferredRev: String?
+    ) {
+        let isFirst = !graphFirstSnapshotApplied
+        graphFirstSnapshotApplied = true
+        graphLoadSlowTask?.cancel()
+        graphLoadSlowTask = nil
+        graphLoadSlow = false
+        dagLayout = DAGLayout(computed: snapshot.layout)
 
-        let nextDepth = currentDepth + Self.defaultRevsetPageSize
-        let nextRevset = Self.buildDefaultRevset(depth: nextDepth)
-        let previousIds = Set(graphEntries.map(\.change.changeId))
-        let preferredRev = selectedChangeId
-        let includeSubmoduleStatuses = includeSubmoduleStatuses
+        if isFirst {
+            graphEntries = snapshot.entries
+        } else {
+            assert(snapshot.entries.count >= graphEntries.count)
+            assert(zip(graphEntries, snapshot.entries).allSatisfy { pair in
+                pair.0.change.commitId == pair.1.change.commitId
+            })
+            graphEntries.append(contentsOf: snapshot.entries.dropFirst(graphEntries.count))
+        }
 
-        refreshTask?.cancel()
-        isRefreshingInFlight = true
-        error = nil
+        if snapshot.isComplete {
+            canLoadMore = Self.canLoadMore(revset: revset, loadedCount: graphEntries.count)
+        }
+        if let workingCopy = snapshot.entries.first(where: { $0.change.isWorkingCopy })?.change {
+            applyWorkingCopy(changeId: workingCopy.changeId.id, description: workingCopy.description)
+        }
+        isLoading = false
 
-        refreshTask = startRepoTask { [weak self, repo, includeSubmoduleStatuses] in
-            do {
-                let content = try Self.loadRefreshContent(
-                    repo: repo,
-                    revset: nextRevset,
-                    preferredRev: preferredRev,
-                    includeSubmoduleStatuses: includeSubmoduleStatuses
-                )
-                guard !Task.isCancelled else { return }
+        guard isFirst else { return }
+        let selected = preferredCommitId.flatMap { commitId in
+            snapshot.entries.first(where: { $0.change.commitId.id == commitId })
+        } ?? preferredRev.flatMap { rev in
+            snapshot.entries.first(where: { $0.change.matchesRevision(rev) })
+        } ?? snapshot.entries.first(where: { $0.change.isWorkingCopy }) ?? snapshot.entries.first
+        if let selected,
+           let detail = graphPendingSelectedChange,
+           detail.info.commitId == selected.change.commitId
+        {
+            applySingleSelectedChange(detail)
+            fetchPrInfo(bookmarks: detail.info.bookmarks)
+        } else {
+            select(changeId: selected?.change.selectionRevision)
+        }
+        graphPendingSelectedChange = nil
+    }
 
-                let didGrow = !Set(content.graph.entries.map(\.change.changeId)).isSubset(of: previousIds)
-                let canLoadMore = didGrow && Self.canLoadMore(
-                    revset: nextRevset,
-                    loadedCount: content.graph.entries.count
-                )
-
-                guard !Task.isCancelled else { return }
-                await self?.applyLoadMoreContent(
-                    content,
-                    canLoadMore: canLoadMore,
-                    didGrow: didGrow,
-                    revset: nextRevset
-                )
-            } catch {
-                guard !Task.isCancelled else { return }
-                let presence = repo.workspacePresence()
-                await self?.applyRefreshFailure(error, presence: presence)
-            }
+    func refreshOrCancel() {
+        if graphLoadToken != nil {
+            cancelGraphLoad()
+        } else {
+            refresh()
         }
     }
 
-    @MainActor
-    private func applyLoadMoreContent(
-        _ content: RepoRefreshContent,
-        canLoadMore: Bool,
-        didGrow: Bool,
-        revset: String
-    ) {
-        guard !isShuttingDown else { return }
-        apply(content)
+    func cancelGraphLoad() {
+        guard let graphLoadToken else { return }
+        graphLoadToken.cancel()
+        refreshTask?.cancel()
+        graphLoadCanceling = true
+    }
+
+    /// A mutation cannot share a repository generation with a pinned graph reader. Reject queued
+    /// graph events before the write begins; the canceled worker still observes its core token.
+    func cancelGraphLoadForMutation() {
+        guard graphLoadToken != nil else { return }
+        cancelGraphLoad()
+        graphRefreshGeneration &+= 1
         isRefreshingInFlight = false
-        self.canLoadMore = canLoadMore
-        if didGrow {
-            self.revset = revset
-        }
-        resumePendingBackgroundRefresh()
+        isLoading = false
+    }
+
+    func continueLoading() {
+        guard graphPaused, let graphLoadToken else { return }
+        let currentCeiling = graphRowCeiling == 0
+            ? defaultLogGraphRequest(revset: revset).rowCeiling
+            : graphRowCeiling
+        graphRowCeiling = currentCeiling.multipliedReportingOverflow(by: 2).overflow
+            ? UInt32.max
+            : currentCeiling * 2
+        graphPaused = false
+        isRefreshingInFlight = true
+        graphLoadToken.continueLoading(rowCeiling: graphRowCeiling)
+    }
+
+    func loadMore() {
+        guard !isShuttingDown, canLoadMore, let currentDepth = Self.defaultRevsetDepth(for: revset) else { return }
+        revset = Self.buildDefaultRevset(depth: currentDepth + Self.defaultRevsetPageSize)
+        refresh()
     }
 
     func resumePendingBackgroundRefresh(afterFailure: Bool = false) {
@@ -266,28 +315,29 @@ extension RepoViewModel {
         refresh(isAutoTriggered: true)
     }
 
-    private static func loadRefreshContent(
-        repo: JayJayRepo,
-        revset: String,
-        preferredRev: String?,
-        includeSubmoduleStatuses: Bool,
-        includeContext: Bool = true
-    ) throws -> RepoRefreshContent {
-        let graph = try repo.logGraphWithLayout(revset: revset)
-        let log = graph.entries.map(\.change)
-        let selectedChange = try loadSelectedDetail(
-            repo: repo,
-            log: log,
-            preferredRev: preferredRev,
-            includeSubmoduleStatuses: includeSubmoduleStatuses
+    private static func graphRequest(revset: String, rowCeiling: UInt32) -> LogGraphRequest {
+        let defaults = defaultLogGraphRequest(revset: revset)
+        return LogGraphRequest(
+            revset: defaults.revset,
+            initialRows: defaults.initialRows,
+            backgroundBatchRows: defaults.backgroundBatchRows,
+            firstResultBudgetMs: defaults.firstResultBudgetMs,
+            rowCeiling: rowCeiling == 0 ? defaults.rowCeiling : rowCeiling
         )
-        let workingCopy = log.first(where: { $0.isWorkingCopy })
-        return try RepoRefreshContent(
-            graph: graph,
-            selectedChange: selectedChange,
-            workingCopyChangeId: workingCopy?.changeId.id ?? "",
-            workingCopyDescription: workingCopy?.description ?? "",
-            context: includeContext ? RepoRefreshContext(repo: repo) : nil
+    }
+
+    private static func loadRefreshAncillary(
+        repo: JayJayRepo,
+        preferredRev: String,
+        includeSubmoduleStatuses: Bool
+    ) throws -> RepoRefreshAncillary {
+        try RepoRefreshAncillary(
+            context: RepoRefreshContext(repo: repo),
+            selectedChange: try? loadSummaryWithConflicts(
+                repo: repo,
+                rev: preferredRev,
+                includeSubmoduleStatuses: includeSubmoduleStatuses
+            )
         )
     }
 }

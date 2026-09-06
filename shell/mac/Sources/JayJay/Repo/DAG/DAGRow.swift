@@ -34,11 +34,10 @@ struct DAGRow: View {
         .onHover { isContextTarget = $0 }
     }
 
-    private func rowBody(_ viewModel: DAGRowViewModel, wiggleAngle: Double) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            graphColumn
-                .frame(width: viewModel.graphWidth)
-
+    /// The band labels sit in their own unpadded strip so they line up with the bands the graph
+    /// column paints in the row's bottom `bandCount * dagElisionBandHeight`.
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 refsRow
                     .lineLimit(1)
@@ -59,7 +58,23 @@ struct DAGRow: View {
                 .jayjayFont(10).lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary)
             }
             .padding(.vertical, dagRowVerticalPadding)
-            .padding(.trailing, 10)
+
+            ForEach(Array(viewModel.elisionBands.enumerated()), id: \.offset) { _, _ in
+                Text("(elided revisions)")
+                    .jayjayFont(10)
+                    .foregroundStyle(.tertiary)
+                    .frame(height: dagElisionBandHeight, alignment: .leading)
+            }
+        }
+    }
+
+    private func rowBody(_ viewModel: DAGRowViewModel, wiggleAngle: Double) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            graphColumn
+                .frame(width: viewModel.graphWidth)
+
+            textColumn
+                .padding(.trailing, 10)
             Spacer(minLength: 0)
         }
         .padding(.leading, dagRowLeadingPadding)

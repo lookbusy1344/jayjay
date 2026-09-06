@@ -9,6 +9,12 @@ enum AppColors {
     static func changeIdPrefix(_ scheme: ColorScheme) -> Color {
         Color(rgb: changeIdPrefixColor(isDark: scheme == .dark))
     }
+
+    /// The DAG "lanes continue off-screen" chevron. A soft blue that stays distinct from the neutral
+    /// graph strokes and reads clearly over both plain and selection-tinted rows.
+    static func dagOverflowMarker(_ scheme: ColorScheme) -> Color {
+        Color(rgb: scheme == .dark ? 0x93B8F5 : 0x3F7AD6)
+    }
 }
 
 private extension Color {
