@@ -6,9 +6,9 @@ use gpui::{
 
 use super::bisect_row_styles::BisectRowStyles;
 use super::bookmark_picker::{bookmarks_header_button, listed_bookmark_count};
-use super::dag::{DagRowLanes, dag_column};
+use super::dag::{DagGeometry, LaneEmphasis, dag_column};
 use super::dag_drag::DagDragSelection;
-use super::dag_row::{ChipMenus, ChipRightClick, DagDrop, DagRow, dag_row};
+use super::dag_row::{ChipMenus, ChipRightClick, DagDrop, DagRow, dag_row, row_background};
 use super::{ActivePane, RepoWindow};
 use crate::app::fonts::CodeText as _;
 use crate::app::theme::{FONT_META, HEADER_HEIGHT, Theme, ui_font_size};
@@ -22,14 +22,25 @@ pub(super) fn sidebar(
     width: f32,
     cx: &mut Context<RepoWindow>,
 ) -> AnyElement {
-    let (repo_open, changes, loading_more, show_load_more, default_revset, bookmarks) = {
+    let (
+        repo_open,
+        changes,
+        loading_more,
+        show_load_more,
+        show_continue,
+        default_revset,
+        graph_load_slow,
+        bookmarks,
+    ) = {
         let vm = view.vm.read(cx);
         (
             vm.repo.is_some(),
             vm.graph.changes.clone(),
             vm.loading.more,
             vm.error.is_none() && vm.can_load_more && !vm.graph.changes.is_empty(),
+            vm.error.is_none() && vm.loading.graph_paused && !vm.graph.changes.is_empty(),
             vm.revset_depth().is_some(),
+            vm.loading.graph_load_slow,
             vm.graph.bookmarks.clone(),
         )
     };
@@ -51,7 +62,7 @@ pub(super) fn sidebar(
             })
             .into_any_element()
     } else {
-        let row_count = change_count + usize::from(show_load_more);
+        let row_count = change_count + usize::from(show_load_more || show_continue);
         let t_clone = t.clone();
         let scroll = view.scrolls.changes.clone();
         let changes_for_processor = changes.clone();
@@ -59,9 +70,8 @@ pub(super) fn sidebar(
         let view_handle = cx.entity();
         let dag_layout = view.vm.read(cx).graph.dag_layout.clone();
         let entries = view.vm.read(cx).graph.entries.clone();
-        let refs_budget = width
-            - super::dag::lane_column_width(dag_layout.display_lane_count())
-            - t.scaled_font_size(12.);
+        let dag_geometry = DagGeometry::new(dag_layout.logical_column_count, width);
+        let widest_elision_bands = dag_layout.widest_elision_band_count as usize;
         let list = uniform_list(
             "changes",
             row_count,
@@ -104,7 +114,11 @@ pub(super) fn sidebar(
                 range
                     .map(|ix| {
                         if ix == change_count {
-                            return load_more_button(loading_more, &t, cx);
+                            return if show_load_more {
+                                load_more_button(loading_more, &t, cx)
+                            } else {
+                                continue_loading_button(&t, cx)
+                            };
                         }
                         let has_multiple_selection = selected_changes.len() > 1;
                         let is_selected_change = if has_multiple_selection {
@@ -146,31 +160,23 @@ pub(super) fn sidebar(
                                     view.drop_dag_drag_on_change(drag, destination, cx);
                                 });
                             });
-                        let row_lane = dag_layout.lane(&change.commit_id);
-                        let pass_through_lanes = dag_layout.pass_through_lane_indices(ix).to_vec();
-                        let prev_active_lanes = if ix > 0 {
-                            dag_layout.active_lane_indices(ix - 1).to_vec()
-                        } else {
-                            Vec::new()
-                        };
-                        let has_overflow = dag_layout.row_has_overflow(ix);
-                        let has_missing_ancestry = dag_layout.row_has_missing_ancestry(ix);
-                        let dag_col = entries.get(ix).map(|entry| {
-                            dag_column(
-                                entry,
-                                DagRowLanes {
-                                    row: ix,
-                                    row_lane,
-                                    active_lane,
-                                    pass_through_lanes,
-                                    prev_active_lanes,
-                                    has_overflow,
-                                    has_missing_ancestry,
-                                },
-                                &dag_layout,
-                                &t,
-                            )
+                        let row_bg =
+                            row_background(&t, is_selected, is_compare_source, is_pane_active);
+                        let dag_col = entries.get(ix).and_then(|entry| {
+                            dag_layout.rows.get(ix).map(|row| {
+                                debug_assert_eq!(
+                                    row.commit_id, entry.change.commit_id.id,
+                                    "graph entries and DAG rows must remain index-aligned"
+                                );
+                                let emphasis = active_lane
+                                    .map(|span| LaneEmphasis::new(span, ix, row.node_column));
+                                dag_column(entry, row, emphasis, &dag_geometry, &t, row_bg)
+                            })
                         });
+                        let graph_width = dag_layout.rows.get(ix).map_or(0., |row| {
+                            dag_geometry.row_graph_width(row.graph_column_count).width
+                        });
+                        let refs_budget = width - graph_width - t.scaled_font_size(12.);
                         let row_style =
                             bisect_rows.for_commit(&changes_for_processor[ix].commit_id.id);
                         dag_row(
@@ -197,6 +203,11 @@ pub(super) fn sidebar(
                                 lane_end_blink: lane_end_blink
                                     .filter(|&(row, _)| row == ix && is_selected)
                                     .map(|(_, blink)| blink),
+                                elision_bands: dag_layout
+                                    .rows
+                                    .get(ix)
+                                    .map_or(0, |row| row.elisions_after.len()),
+                                widest_elision_bands,
                             },
                             on_click,
                             on_right_click,
@@ -258,6 +269,18 @@ pub(super) fn sidebar(
     );
     if let Some(banner) = push_follow_up_banner(view, t, cx) {
         col = col.child(banner);
+    }
+    if graph_load_slow {
+        col = col.child(
+            div()
+                .px(px(12.))
+                .py(px(8.))
+                .border_b_1()
+                .border_color(rgb(t.row_border))
+                .text_size(ui_font_size(FONT_META))
+                .text_color(rgb(t.fg_dim))
+                .child(jayjay_i18n::repo::still_loading_history()),
+        );
     }
     col = col.child(div().flex_1().min_h_0().child(body));
     if show_commit_box {
@@ -384,6 +407,34 @@ fn commit_box_button(
         .debug_selector(move || id.to_owned())
         .tooltip(text_tooltip(tooltip))
         .on_click(cx.listener(move |view, _: &ClickEvent, _w, cx| handler(view, cx)))
+}
+
+fn continue_loading_button(t: &Theme, cx: &mut Context<RepoWindow>) -> AnyElement {
+    div()
+        .id(SharedString::from("continue-loading"))
+        .flex()
+        .flex_row()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap(px(6.))
+        .px(px(12.))
+        .py(px(6.))
+        .bg(rgb(t.header_bg))
+        .border_t_1()
+        .border_color(rgb(t.border))
+        .text_size(ui_font_size(FONT_META))
+        .text_color(rgb(t.fg_dim))
+        .cursor_pointer()
+        .debug_selector(|| "sidebar-continue-loading".to_owned())
+        .child(icon_label(
+            glyph::ARROW_DOWN,
+            jayjay_i18n::repo::continue_loading(),
+            12.,
+            t.fg_dim,
+        ))
+        .on_click(cx.listener(|view, _: &ClickEvent, _w, cx| view.continue_loading(cx)))
+        .into_any_element()
 }
 
 fn load_more_button(loading: bool, t: &Theme, cx: &mut Context<RepoWindow>) -> AnyElement {

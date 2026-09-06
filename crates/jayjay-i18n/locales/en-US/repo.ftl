@@ -591,6 +591,7 @@ repo-review-note-count =
 repo-cancelling = Cancelling…
 repo-cancel-update = Cancel Update
 repo-still-loading-history = Still loading history…
+repo-continue-loading = Continue loading
 repo-continue-loading-title = Continue Loading
 repo-elided-revisions-placeholder = (elided revisions)
 repo-elided-revisions = Elided revisions
