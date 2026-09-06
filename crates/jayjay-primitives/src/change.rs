@@ -173,7 +173,7 @@ pub struct GraphEntry {
     pub edges: Vec<GraphEdge>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GraphEdge {
     /// Target commit_id (hex) this edge points to.
     pub target: String,
