@@ -60,6 +60,7 @@ extension RepoViewModel {
         selections: [DiffEditFileSelection],
         ignoreWhitespace: Bool
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         let includeSubmoduleStatuses = includeSubmoduleStatuses
         runRepoTask {
@@ -105,6 +106,7 @@ extension RepoViewModel {
         content: String,
         completion: @escaping @MainActor (Bool) -> Void
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         runRepoTask {
             try $0.applyConflictEditor(rev: rev, data: data, content: content)
@@ -123,6 +125,7 @@ extension RepoViewModel {
         content: String,
         completion: @escaping @MainActor (Bool) -> Void
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         runRepoTask {
             try $0.applyWorkingCopyFileEditor(data: data, content: content)

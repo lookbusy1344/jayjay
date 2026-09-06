@@ -1,10 +1,9 @@
 import JayJayCore
 import SwiftUI
 
-@MainActor
 struct DAGViewModel {
-    nonisolated private static let downArrowKeyCode: UInt16 = 125
-    nonisolated private static let upArrowKeyCode: UInt16 = 126
+    private static let downArrowKeyCode: UInt16 = 125
+    private static let upArrowKeyCode: UInt16 = 126
 
     let entries: [GraphEntry]
     let selectedId: String?
@@ -16,7 +15,60 @@ struct DAGViewModel {
     let layout: DAGLayout
     let capabilities: DAGSelectionCapabilities
     var isActivePane = true
-    private let cache = Cache()
+    let geometry: DAGGeometry
+
+    // Derived state built once per view model, not per row. macOS SwiftUI evaluates each row's
+    // `.contextMenu` content eagerly on every body update, so any O(entries) work these lookups back
+    // would otherwise run per visible row — quadratic on a large graph.
+    private let changeByRevision: [String: ChangeInfo]
+    private let selectedChanges: [ChangeInfo]
+
+    init(
+        entries: [GraphEntry],
+        selectedId: String?,
+        selectedIds: [String],
+        compareFromId: String?,
+        rebaseDrag: DAGRebaseDragState?,
+        bookmarkDrag: BookmarkDragState?,
+        colorScheme: ColorScheme,
+        layout: DAGLayout,
+        capabilities: DAGSelectionCapabilities,
+        geometry: DAGGeometry,
+        isActivePane: Bool = true
+    ) {
+        self.entries = entries
+        self.selectedId = selectedId
+        self.selectedIds = selectedIds
+        self.compareFromId = compareFromId
+        self.rebaseDrag = rebaseDrag
+        self.bookmarkDrag = bookmarkDrag
+        self.colorScheme = colorScheme
+        self.layout = layout
+        self.capabilities = capabilities
+        self.geometry = geometry
+        self.isActivePane = isActivePane
+
+        // `matchesRevision` matches either id, so `change(for:)` becomes an O(1) lookup keyed by both,
+        // keeping the first entry for a key to mirror the previous `first(where:)` scan.
+        var lookup: [String: ChangeInfo] = [:]
+        lookup.reserveCapacity(entries.count * 2)
+        for entry in entries {
+            let change = entry.change
+            if lookup[change.commitId.id] == nil {
+                lookup[change.commitId.id] = change
+            }
+            if lookup[change.changeId.id] == nil {
+                lookup[change.changeId.id] = change
+            }
+        }
+        changeByRevision = lookup
+
+        let selectedIdSet = Set(selectedIds)
+        selectedChanges = entries.map(\.change).filter { change in
+            let revision = change.selectionRevision
+            return selectedIdSet.contains(revision) || (selectedIds.isEmpty && selectedId == revision)
+        }
+    }
 
     var isEmpty: Bool {
         entries.isEmpty
@@ -50,25 +102,41 @@ struct DAGViewModel {
         capabilities.canMerge(with: target)
     }
 
-    private var selectedChanges: [ChangeInfo] {
-        if let changes = cache.selectedChanges {
-            return changes
+    var canDiffSelection: Bool {
+        isContiguousLinearSelection && Self.rangeHasSingleParentBase(selectedChanges)
+    }
+
+    private var isContiguousLinearSelection: Bool {
+        let selectedEntries = entries.enumerated().filter { isSelected($0.element.change) }
+        guard let first = selectedEntries.first?.offset,
+              let last = selectedEntries.last?.offset,
+              selectedEntries.count == last - first + 1
+        else {
+            return false
         }
-        let changes = entries.compactMap { isSelected($0.change) ? $0.change : nil }
-        cache.selectedChanges = changes
-        return changes
+        return Self.formsConsecutiveLinearRange(selectedChanges)
+    }
+
+    static func formsConsecutiveLinearRange(_ changes: [ChangeInfo]) -> Bool {
+        changes.count > 1 && zip(changes, changes.dropFirst()).allSatisfy { newer, older in
+            newer.parents == [older.commitId.id]
+        }
+    }
+
+    /// The combined diff bases on the oldest change's single parent; squashing the same range into a merge commit is still legal.
+    static func rangeHasSingleParentBase(_ changes: [ChangeInfo]) -> Bool {
+        changes.last?.parents.count == 1
     }
 
     func rowViewModel(
         for entry: GraphEntry,
-        index: Int,
         rebasePreviewText: String?,
         bookmarkPreviewText: String?
     ) -> DAGRowViewModel {
         DAGRowViewModel(
             entry: entry,
             layout: layout,
-            index: index,
+            geometry: geometry,
             selectedId: selectedId,
             selectedIds: selectedIds,
             compareFromId: compareFromId,
@@ -87,6 +155,12 @@ struct DAGViewModel {
     }
 
     func selectedChangeId(afterMovingBy delta: Int) -> String? {
+        Self.selectedChangeId(in: entries, selectedId: selectedId, afterMovingBy: delta)
+    }
+
+    /// Static so keyboard navigation resolves the next selection without building a whole view model
+    /// (and its per-view-model precompute) on every arrow press.
+    static func selectedChangeId(in entries: [GraphEntry], selectedId: String?, afterMovingBy delta: Int) -> String? {
         guard !entries.isEmpty else { return nil }
         let currentIdx: Int = if let selectedId,
                                  let idx = entries.firstIndex(where: { $0.change.selectionRevision == selectedId })
@@ -110,16 +184,7 @@ struct DAGViewModel {
     }
 
     func change(for changeId: String) -> ChangeInfo? {
-        if cache.changesByRevision == nil {
-            var changes: [String: ChangeInfo] = [:]
-            for entry in entries {
-                for revision in [entry.change.changeId.id, entry.change.commitId.id] where changes[revision] == nil {
-                    changes[revision] = entry.change
-                }
-            }
-            cache.changesByRevision = changes
-        }
-        return cache.changesByRevision?[changeId]
+        changeByRevision[changeId]
     }
 
     func canSquashIntoParent(_ target: ChangeInfo) -> Bool {
@@ -128,7 +193,7 @@ struct DAGViewModel {
     }
 
     func bookmarkDiffRequest(from selectedId: String, to target: ChangeInfo) -> BookmarkDiffRequest? {
-        guard let selectedChange = change(for: selectedId),
+        guard let selectedChange = changeByRevision[selectedId],
               let base = RevsetExpressions.primaryBaseBookmarkEndpoint(for: selectedChange),
               let head = RevsetExpressions.primaryHeadBookmarkEndpoint(for: target),
               base.label != head.label
@@ -139,7 +204,7 @@ struct DAGViewModel {
     }
 
     func scrollId(for rev: String) -> String {
-        change(for: rev)?.selectionRevision ?? rev
+        changeByRevision[rev]?.selectionRevision ?? rev
     }
 
     /// Other visible commits that share this change's id — the siblings of a divergent change. Empty unless `change` is divergent. Used to offer an interdiff between two versions of the same change so the user can see which is safer to abandon.
@@ -150,7 +215,7 @@ struct DAGViewModel {
             .filter { $0.changeId.id == change.changeId.id && $0.commitId.id != change.commitId.id }
     }
 
-    nonisolated static func selectionDelta(
+    static func selectionDelta(
         keyCode: UInt16,
         charactersIgnoringModifiers: String?,
         controlPressed: Bool
@@ -176,11 +241,5 @@ struct DAGViewModel {
             default:
                 return nil
         }
-    }
-
-    /// All inputs are immutable, so row menus can share derived data for this view-model snapshot.
-    private final class Cache {
-        var selectedChanges: [ChangeInfo]?
-        var changesByRevision: [String: ChangeInfo]?
     }
 }

@@ -28,9 +28,7 @@ enum DAGRowRebaseState: Equatable {
     case hoverTarget(previewText: String?)
 }
 
-/// Drop-target state for a bookmark/@ chip drag. Unlike a rebase, only the
-/// hovered row matters. A resolved bookmark ignores its own row; a conflicted
-/// chip may highlight that row so dropping there picks the commit.
+/// Drop-target state for a bookmark/@ chip drag. Unlike a rebase, only the hovered row matters. A resolved bookmark ignores its own row; a conflicted chip may highlight that row so dropping there picks the commit.
 enum DAGRowBookmarkDropState: Equatable {
     case none
     /// `previewText` is nil until the hover-preview delay elapses, then "Move … here?".
@@ -40,17 +38,27 @@ enum DAGRowBookmarkDropState: Equatable {
 struct DAGRowViewModel {
     let entry: GraphEntry
     let layout: DAGLayout
-    let index: Int
+    let geometry: DAGGeometry
     let colorScheme: ColorScheme
     let isActivePane: Bool
     private(set) var selectionAccent: DAGRowSelectionAccent?
     let rebaseState: DAGRowRebaseState
     let bookmarkDropState: DAGRowBookmarkDropState
 
+    var row: DagRowShape? {
+        layout.row(for: entry.change.commitId.id)
+    }
+
+    /// Synthetic `(elided revisions)` bands owned by this row, in `jj log`'s emission order. Never
+    /// selectable or independently addressable — Rust never gives one a real commit id.
+    var elisionBands: [DagElisionBand] {
+        row?.elisionsAfter ?? []
+    }
+
     init(
         entry: GraphEntry,
         layout: DAGLayout,
-        index: Int,
+        geometry: DAGGeometry,
         selectedId: String?,
         selectedIds: [String] = [],
         compareFromId: String?,
@@ -63,7 +71,7 @@ struct DAGRowViewModel {
     ) {
         self.entry = entry
         self.layout = layout
-        self.index = index
+        self.geometry = geometry
         self.colorScheme = colorScheme
         self.isActivePane = isActivePane
 
@@ -136,13 +144,46 @@ struct DAGRowViewModel {
     }
 
     var graphWidth: CGFloat {
-        layout.graphWidth
+        geometry.graphWidth(forColumnCount: graphColumnCount)
+    }
+
+    /// True when this row's native lanes run past the gutter budget, so the graph column draws an overflow marker at its trailing edge.
+    var isGraphClipped: Bool {
+        geometry.isClipped(forColumnCount: graphColumnCount)
+    }
+
+    private var graphColumnCount: Int {
+        Int(row?.graphColumnCount ?? 1)
     }
 
     var descriptionLine: String? {
         let line = change.description.components(separatedBy: "\n").first ?? ""
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var accessibilitySummary: String {
+        var parts = [change.changeId.id]
+        if change.isWorkingCopy {
+            parts.append("Working copy")
+        }
+        if change.hasConflict {
+            parts.append("Conflict")
+        }
+        if change.isDivergent {
+            parts.append("Divergent")
+        }
+        parts.append(contentsOf: change.bookmarks.map { "Bookmark \($0)" })
+        parts.append(contentsOf: change.tags.map { "Tag \($0)" })
+        parts.append(descriptionLine ?? "No description")
+        parts.append(change.author.name)
+        if !elisionBands.isEmpty {
+            parts.append("Elided revisions")
+        }
+        if isGraphClipped {
+            parts.append("Graph continues beyond the sidebar")
+        }
+        return parts.joined(separator: ", ")
     }
 
     var rowBackground: AnyShapeStyle {

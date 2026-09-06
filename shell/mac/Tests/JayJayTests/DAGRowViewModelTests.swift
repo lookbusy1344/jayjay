@@ -11,11 +11,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "feat-x",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: makeDragState(sourceCommitId: "source-commit", phase: .pressing),
@@ -39,11 +40,12 @@ final class DAGRowViewModelTests: XCTestCase {
             isImmutable: false
         )
         let armedAt = Date(timeIntervalSinceReferenceDate: 10)
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: makeDragState(
@@ -76,11 +78,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "main update",
             isImmutable: true
         )
+        let layout = DAGLayout(entries: [source, target])
 
         let viewModel = DAGRowViewModel(
             entry: target,
-            layout: DAGLayout(entries: [source, target]),
-            index: 1,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: makeDragState(sourceCommitId: "source-commit", phase: .dragging),
@@ -103,11 +106,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "main update",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [target])
 
         let viewModel = DAGRowViewModel(
             entry: target,
-            layout: DAGLayout(entries: [target]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -132,11 +136,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "main update",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [target])
 
         let viewModel = DAGRowViewModel(
             entry: target,
-            layout: DAGLayout(entries: [target]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -158,11 +163,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "main update",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [target])
 
         let viewModel = DAGRowViewModel(
             entry: target,
-            layout: DAGLayout(entries: [target]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -184,11 +190,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "feat-x",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: "selected-change",
             compareFromId: nil,
             rebaseDrag: nil,
@@ -212,10 +219,11 @@ final class DAGRowViewModelTests: XCTestCase {
             isImmutable: false
         )
 
+        let layout = DAGLayout(entries: [entry])
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -238,11 +246,12 @@ final class DAGRowViewModelTests: XCTestCase {
             isImmutable: false,
             isDivergent: true
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: "selected-commit",
             compareFromId: nil,
             rebaseDrag: nil,
@@ -263,11 +272,12 @@ final class DAGRowViewModelTests: XCTestCase {
             isImmutable: false,
             isDivergent: true
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: "same-change",
             compareFromId: nil,
             rebaseDrag: nil,
@@ -287,12 +297,13 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "feat-x",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [entry])
 
         for compareFromId in ["compare-source-change", "compare-source-commit"] {
             let viewModel = DAGRowViewModel(
                 entry: entry,
-                layout: DAGLayout(entries: [entry]),
-                index: 0,
+                layout: layout,
+                geometry: defaultGeometry(for: layout),
                 selectedId: "other-change",
                 compareFromId: compareFromId,
                 rebaseDrag: nil,
@@ -314,11 +325,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "parent",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: "selected-head",
             selectedIds: ["selected-head", "selected-middle"],
             compareFromId: "combined-diff-parent",
@@ -340,11 +352,12 @@ final class DAGRowViewModelTests: XCTestCase {
             description: "source",
             isImmutable: false
         )
+        let layout = DAGLayout(entries: [entry])
 
         let viewModel = DAGRowViewModel(
             entry: entry,
-            layout: DAGLayout(entries: [entry]),
-            index: 0,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
             selectedId: "compare-target-change",
             selectedIds: ["compare-source-change", "compare-target-change"],
             compareFromId: "compare-source-commit",
@@ -359,36 +372,15 @@ final class DAGRowViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isSelectionHighlighted)
     }
 
-    func testWideGraphKeepsFixedGraphWidth() {
-        let entries = [
-            makeEntry(
-                changeId: "merge-change",
-                commitId: "merge",
-                description: "merge",
-                isImmutable: false,
-                parents: ["p0", "p1", "p2", "p3", "p4", "p5"]
-            ),
-            makeEntry(
-                changeId: "p5-change",
-                commitId: "p5",
-                description: "feature",
-                isImmutable: false,
-                parents: ["base"]
-            ),
-            makeEntry(
-                changeId: "p4-change",
-                commitId: "p4",
-                description: "feature",
-                isImmutable: false,
-                parents: ["base"]
-            )
-        ]
+    func testWideGraphKeepsEveryLogicalColumn() {
+        let entries = makeOctopusEntries(parentCount: 6)
         let layout = DAGLayout(entries: entries)
+        let geometry = defaultGeometry(for: layout)
 
         let viewModel = DAGRowViewModel(
             entry: entries[1],
             layout: layout,
-            index: 1,
+            geometry: geometry,
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -398,36 +390,49 @@ final class DAGRowViewModelTests: XCTestCase {
             colorScheme: .light
         )
 
-        XCTAssertEqual(layout.maxLanes(), 6)
-        XCTAssertEqual(layout.displayLaneCount(), dagCompactVisibleLanes)
-        XCTAssertEqual(layout.displayLane(for: layout.lane(for: "p5")), dagCompactVisibleLanes - 1)
-        XCTAssertTrue(layout.hasLaneOverflow(at: 1))
-        XCTAssertEqual(viewModel.graphWidth, layout.graphWidth)
+        XCTAssertEqual(layout.logicalColumnCount, 6)
+        XCTAssertEqual(layout.row(for: "p5")?.nodeColumn, 5)
+        XCTAssertEqual(viewModel.graphWidth, geometry.graphWidth(forColumnCount: layout.logicalColumnCount))
     }
 
-    func testFourLaneGraphKeepsDynamicGraphWidth() {
-        let entries = [
-            makeEntry(
-                changeId: "merge-change",
-                commitId: "merge",
-                description: "merge",
-                isImmutable: false,
-                parents: ["p0", "p1", "p2", "p3"]
-            ),
-            makeEntry(
-                changeId: "p3-change",
-                commitId: "p3",
-                description: "feature",
-                isImmutable: false,
-                parents: ["base"]
-            )
-        ]
-        let layout = DAGLayout(entries: entries)
-
+    func testRowTextFollowsItsWidestGraphBandRatherThanTheLayoutWidth() {
+        let entry = makeEntry(
+            changeId: "visible-change",
+            commitId: "visible-commit",
+            description: "visible",
+            isImmutable: false
+        )
+        let layout = DAGLayout(computed: .init(
+            rows: [
+                .init(
+                    commitId: "visible-commit",
+                    nodeColumn: 0,
+                    graphColumnCount: 3,
+                    incoming: nil,
+                    nodeLine: [.direct],
+                    linkLine: nil,
+                    terminationColumns: [],
+                    padLine: [.direct],
+                    elisionsAfter: [
+                        .init(
+                            targetCommitId: "elided-target",
+                            nodeColumn: 2,
+                            nodeLine: [.direct, .direct, .direct],
+                            linkLine: nil,
+                            terminationColumns: [],
+                            padLine: [.direct, .direct, .direct]
+                        )
+                    ]
+                )
+            ],
+            logicalColumnCount: 6,
+            widestElisionBandCount: 1
+        ))
+        let geometry = defaultGeometry(for: layout)
         let viewModel = DAGRowViewModel(
-            entry: entries[1],
+            entry: entry,
             layout: layout,
-            index: 1,
+            geometry: geometry,
             selectedId: nil,
             compareFromId: nil,
             rebaseDrag: nil,
@@ -437,11 +442,161 @@ final class DAGRowViewModelTests: XCTestCase {
             colorScheme: .light
         )
 
-        XCTAssertEqual(layout.maxLanes(), 4)
-        XCTAssertEqual(layout.displayLaneCount(), 4)
-        XCTAssertEqual(layout.displayLane(for: layout.lane(for: "p3")), 3)
-        XCTAssertFalse(layout.hasLaneOverflow(at: 1))
-        XCTAssertEqual(viewModel.graphWidth, CGFloat(4) * laneWidth + 8)
+        XCTAssertEqual(
+            viewModel.graphWidth,
+            DAGGeometry.horizontalPadding + 3 * geometry.lanePitch
+        )
+        XCTAssertLessThan(viewModel.graphWidth, geometry.graphWidth(forColumnCount: layout.logicalColumnCount))
+    }
+
+    func testFourColumnGraphUsesPreferredPitch() {
+        let entries = makeOctopusEntries(parentCount: 4)
+        let layout = DAGLayout(entries: entries)
+        let geometry = DAGGeometry(logicalColumnCount: layout.logicalColumnCount, availableSidebarWidth: 1000)
+
+        let viewModel = DAGRowViewModel(
+            entry: entries[1],
+            layout: layout,
+            geometry: geometry,
+            selectedId: nil,
+            compareFromId: nil,
+            rebaseDrag: nil,
+            rebasePreviewText: nil,
+            bookmarkDrag: nil,
+            bookmarkPreviewText: nil,
+            colorScheme: .light
+        )
+
+        XCTAssertEqual(layout.logicalColumnCount, 4)
+        XCTAssertEqual(layout.row(for: "p3")?.nodeColumn, 3)
+        XCTAssertEqual(geometry.lanePitch, DAGGeometry.preferredLanePitch)
+        XCTAssertEqual(viewModel.graphWidth, CGFloat(4) * DAGGeometry.preferredLanePitch + DAGGeometry.horizontalPadding)
+    }
+
+    func testAccessibilitySummaryPreservesDescriptionAndElidedRevisions() {
+        let source = makeEntry(
+            changeId: "visible-change",
+            commitId: "visible-commit",
+            description: "add feature",
+            isImmutable: false,
+            edges: [("target-commit", .indirect)]
+        )
+        let target = makeEntry(
+            changeId: "target-change",
+            commitId: "target-commit",
+            description: "base",
+            isImmutable: false
+        )
+        let layout = DAGLayout(entries: [source, target])
+        let viewModel = DAGRowViewModel(
+            entry: source,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
+            selectedId: nil,
+            compareFromId: nil,
+            rebaseDrag: nil,
+            rebasePreviewText: nil,
+            bookmarkDrag: nil,
+            bookmarkPreviewText: nil,
+            colorScheme: .light
+        )
+
+        XCTAssertTrue(viewModel.accessibilitySummary.contains("add feature"))
+        XCTAssertTrue(viewModel.accessibilitySummary.contains("Elided revisions"))
+    }
+
+    func testElidedSourceRowOwnsOneBandAndKeepsItsOwnNodeColumn() {
+        let source = makeEntry(
+            changeId: "source-change",
+            commitId: "source-commit",
+            description: "add feature",
+            isImmutable: false,
+            edges: [("target-commit", .indirect)]
+        )
+        let target = makeEntry(
+            changeId: "target-change",
+            commitId: "target-commit",
+            description: "base",
+            isImmutable: false
+        )
+        let layout = DAGLayout(entries: [source, target])
+
+        let viewModel = DAGRowViewModel(
+            entry: source,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
+            selectedId: nil,
+            compareFromId: nil,
+            rebaseDrag: nil,
+            rebasePreviewText: nil,
+            bookmarkDrag: nil,
+            bookmarkPreviewText: nil,
+            colorScheme: .light
+        )
+
+        XCTAssertEqual(viewModel.elisionBands.count, 1)
+        XCTAssertEqual(viewModel.elisionBands.first?.targetCommitId, "target-commit")
+        // The real change's own node column is unaffected by the band it owns — rebase and
+        // bookmark hit-testing stay anchored to the row's own geometry.
+        XCTAssertEqual(viewModel.row?.nodeColumn, layout.row(for: "source-commit")?.nodeColumn)
+        XCTAssertTrue(viewModel.accessibilitySummary.contains("Elided revisions"))
+    }
+
+    func testSyntheticElisionDisabledLeavesNoBandOnTheSourceRow() {
+        let source = makeEntry(
+            changeId: "source-change",
+            commitId: "source-commit",
+            description: "add feature",
+            isImmutable: false,
+            edges: [("target-commit", .indirect)]
+        )
+        let target = makeEntry(
+            changeId: "target-change",
+            commitId: "target-commit",
+            description: "base",
+            isImmutable: false
+        )
+        let layout = DAGLayout(entries: [source, target], syntheticElidedNodes: false)
+
+        let viewModel = DAGRowViewModel(
+            entry: source,
+            layout: layout,
+            geometry: defaultGeometry(for: layout),
+            selectedId: nil,
+            compareFromId: nil,
+            rebaseDrag: nil,
+            rebasePreviewText: nil,
+            bookmarkDrag: nil,
+            bookmarkPreviewText: nil,
+            colorScheme: .light
+        )
+
+        XCTAssertTrue(viewModel.elisionBands.isEmpty)
+        XCTAssertFalse(viewModel.accessibilitySummary.contains("Elided revisions"))
+    }
+
+    private func defaultGeometry(for layout: DAGLayout) -> DAGGeometry {
+        DAGGeometry(logicalColumnCount: layout.logicalColumnCount, availableSidebarWidth: 320)
+    }
+
+    private func makeOctopusEntries(parentCount: Int) -> [GraphEntry] {
+        let parents = (0 ..< parentCount).map { "p\($0)" }
+        let merge = makeEntry(
+            changeId: "merge-change",
+            commitId: "merge",
+            description: "merge",
+            isImmutable: false,
+            parents: parents
+        )
+        let parentEntries = parents.reversed().map {
+            makeEntry(
+                changeId: "\($0)-change",
+                commitId: $0,
+                description: "feature",
+                isImmutable: false
+            )
+        }
+        return [merge] + parentEntries
     }
 
     private func makeEntry(
@@ -459,6 +614,23 @@ final class DAGRowViewModelTests: XCTestCase {
                 isDivergent: isDivergent
             ),
             edges: parents.map { GraphEdge(target: $0, edgeType: .direct) }
+        )
+    }
+
+    private func makeEntry(
+        changeId: String, commitId: String, description: String, isImmutable: Bool,
+        edges: [(String, EdgeType)]
+    ) -> GraphEntry {
+        GraphEntry(
+            change: mockChangeInfo(
+                changeId: changeId,
+                commitId: commitId,
+                description: description,
+                parents: edges.map(\.0),
+                isImmutable: isImmutable,
+                isDivergent: false
+            ),
+            edges: edges.map { GraphEdge(target: $0.0, edgeType: $0.1) }
         )
     }
 

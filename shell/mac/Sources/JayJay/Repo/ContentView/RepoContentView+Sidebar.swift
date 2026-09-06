@@ -50,6 +50,15 @@ extension RepoContentView {
                 pushFollowUpBanner(name)
                 Divider()
             }
+            if viewModel.graphLoadSlow {
+                Text("Still loading history…")
+                    .jayjayFont(11)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+            }
             DAGView(
                 entries: viewModel.graphEntries,
                 layout: viewModel.dagLayout,
@@ -64,7 +73,24 @@ extension RepoContentView {
                 revealRequest: dagRevealRequest,
                 prHostName: viewModel.prHostName,
                 conflictedBookmarkNames: viewModel.conflictedBookmarkNames,
-                workspacesByName: viewModel.workspacesByName
+                workspacesByName: viewModel.workspacesByName,
+                onOpenWorkspace: { windowManager.openRepo($0.path) },
+                onAbandon: { requestAbandon($0) },
+                onAbandonSelection: { requestAbandonSelection($0) },
+                onSquashSelection: { requestSquashSelection($0) },
+                onCreateBookmark: { rev in presentBookmarkCreate(rev: rev) },
+                onCreateStackedPRs: { rev in presentStackedPr(rev: rev) },
+                onShowAncestors: { commitId in
+                    if previousAncestorFilter == nil {
+                        previousAncestorFilter = viewModel.revset
+                    }
+                    showRevsetFilter = true
+                    viewModel.applyRevset(ancestorsRevset(commitId: commitId), selecting: commitId)
+                },
+                onLoadMore: viewModel.graphPaused
+                    ? { viewModel.continueLoading() }
+                    : viewModel.canLoadMore ? { viewModel.loadMore() } : nil,
+                loadMoreLabel: viewModel.graphPaused ? "Continue Loading" : "Load More"
             )
             if shouldShowCommitBox {
                 Divider()

@@ -7,13 +7,8 @@ struct RepoRebaseFeedback {
 }
 
 private struct RepoRebaseRefreshResult {
-    let graph: GraphWithLayout
-    let selectedChange: ChangeDetail?
-    let workingCopyChangeId: String
-    let workingCopyDescription: String
     let hadConflicts: Bool
     let undoOperationId: String?
-    let context: RepoRefreshContext
 }
 
 extension RepoViewModel {
@@ -24,35 +19,18 @@ extension RepoViewModel {
             viewModel.error = message
         }
     ) {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         isRefreshingInFlight = true
         error = nil
-        let includeSubmoduleStatuses = includeSubmoduleStatuses
-
-        runRepoTask { [requestedRevset = revset, includeSubmoduleStatuses] repo in
-            try Self.rebaseAndReload(
+        runRepoTask { repo in
+            try Self.performRebase(
                 repo: repo,
-                request: request,
-                revset: requestedRevset,
-                includeSubmoduleStatuses: includeSubmoduleStatuses
+                request: request
             )
         } onSuccess: { viewModel, result in
             viewModel.successActionSignal += 1
-            viewModel.setGraph(result.graph.entries, graph: result.graph)
-            viewModel.applySingleSelectedChange(result.selectedChange)
-            viewModel.applyWorkingCopy(
-                changeId: result.workingCopyChangeId,
-                description: result.workingCopyDescription
-            )
-            viewModel.apply(result.context)
-            viewModel.isLoading = false
-            viewModel.isRefreshingInFlight = false
-            viewModel.canLoadMore = Self.canLoadMore(
-                revset: viewModel.revset,
-                loadedCount: result.graph.entries.count
-            )
-            viewModel.fetchPrInfo(bookmarks: result.selectedChange?.info.bookmarks ?? [])
-            viewModel.resumePendingBackgroundRefresh()
+            viewModel.refresh(selecting: request.sourceChangeId, snapshotWorkingCopy: false)
 
             onSuccess(viewModel, RepoRebaseFeedback(
                 message: Self.rebaseMessage(for: request, hadConflicts: result.hadConflicts),
@@ -66,38 +44,19 @@ extension RepoViewModel {
         }
     }
 
-    private static func rebaseAndReload(
+    private static func performRebase(
         repo: JayJayRepo,
-        request: DAGRebaseRequest,
-        revset: String,
-        includeSubmoduleStatuses: Bool
+        request: DAGRebaseRequest
     ) throws -> RepoRebaseRefreshResult {
         let undoOperationId = try repo.opLog().first(where: { $0.isCurrent })?.id.id
         try repo.rebase(rev: request.sourceRev, dest: request.destRev)
         try repo.refreshWorkingCopy()
 
-        let graph = try repo.logGraphWithLayout(revset: revset)
-        let graphEntries = graph.entries
-        let log = graphEntries.map(\.change)
-        let selectedChange = try loadSelectedDetail(
-            repo: repo,
-            log: log,
-            preferredRev: request.sourceChangeId,
-            includeSubmoduleStatuses: includeSubmoduleStatuses
-        )
-        let workingCopy = log.first(where: { $0.isWorkingCopy })
-        let hadConflicts = graphEntries.contains(where: {
-            $0.change.changeId.id == request.sourceChangeId && $0.change.hasConflict
-        })
+        let hadConflicts = (try? repo.showSummary(rev: request.sourceChangeId).info.hasConflict) ?? false
 
-        return try RepoRebaseRefreshResult(
-            graph: graph,
-            selectedChange: selectedChange,
-            workingCopyChangeId: workingCopy?.changeId.id ?? "",
-            workingCopyDescription: workingCopy?.description ?? "",
+        return RepoRebaseRefreshResult(
             hadConflicts: hadConflicts,
-            undoOperationId: undoOperationId,
-            context: RepoRefreshContext(repo: repo)
+            undoOperationId: undoOperationId
         )
     }
 

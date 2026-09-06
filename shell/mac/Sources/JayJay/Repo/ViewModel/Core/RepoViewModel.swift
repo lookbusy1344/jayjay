@@ -7,7 +7,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
 
     let repoPath: String
     private(set) var graphEntries: [GraphEntry] = []
-    private(set) var dagLayout = DAGLayout(entries: [])
+    private(set) var dagLayout = DAGLayout.empty
     /// Views key derived work on this so the entries are compared once per refresh, not per body pass.
     private(set) var graphGeneration: UInt64 = 0
     @ObservationIgnored private var selectionGraph: DagSelectionGraph?
@@ -21,8 +21,16 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     func setGraph(_ entries: [GraphEntry], graph: GraphWithLayout? = nil) {
         let changed = entries != graphEntries
         graphEntries = entries
-        dagLayout = graph.map { DAGLayout(data: $0.layout) } ?? DAGLayout(entries: entries)
-        selectionGraph = graph?.selection ?? DagSelectionGraph(entries: entries)
+        if let graph {
+            dagLayout = DAGLayout(computed: graph.layout)
+            selectionGraph = graph.selection
+        } else {
+            let syntheticElidedNodes = (try? repo.logGraphSyntheticElidedNodes()) ?? false
+            dagLayout = DAGLayout(
+                computed: computeDagLayout(entries: entries, syntheticElidedNodes: syntheticElidedNodes)
+            )
+            selectionGraph = DagSelectionGraph(entries: entries)
+        }
         if changed {
             graphGeneration &+= 1
         }
@@ -96,7 +104,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     let reviewStore = ReviewStore()
     let diffStore = DiffStore()
 
-    var revset: String = defaultRevset()
+    var revset: String = RepoViewModel.buildDefaultRevset()
 
     let repo: JayJayRepo
 
@@ -108,6 +116,23 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     var configWarning: String?
     private var fsWatcher: RepoFSWatcher?
     var refreshTask: Task<Void, Never>?
+    @ObservationIgnored var graphLoadToken: JayJayGraphLoadToken?
+    @ObservationIgnored var graphLoadGeneration: UInt64?
+    @ObservationIgnored var graphLoadSlowTask: Task<Void, Never>?
+    @ObservationIgnored var graphRefreshGeneration: UInt64 = 0
+    @ObservationIgnored var graphFirstSnapshotApplied = false
+    @ObservationIgnored var graphPendingSelectedChange: ChangeDetail?
+    var graphPaused = false
+    var graphLoadSlow = false
+    var graphLoadCanceling = false
+    var graphRowCeiling: UInt32 = 0
+    var graphLoadActionLabel: String {
+        if graphLoadCanceling {
+            return "Cancelling…"
+        }
+        return isRefreshingInFlight ? "Cancel Update" : "Refresh"
+    }
+
     /// A superseded refresh stays registered: cancellation cannot interrupt synchronous FFI.
     var repoTasks: [UUID: Task<Void, Never>] = [:]
     var isShuttingDown = false
@@ -172,6 +197,10 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     func beginShutdown() {
         guard !isShuttingDown else { return }
         isShuttingDown = true
+        graphLoadToken?.cancel()
+        graphLoadToken = nil
+        graphLoadSlowTask?.cancel()
+        graphLoadSlowTask = nil
         repoTasks.values.forEach { $0.cancel() }
         refreshTask = nil
         prFetchTask = nil
