@@ -20,7 +20,6 @@ use jayjay_review::ReviewStore;
 
 use crate::dag::{DagSelectionGraph, GraphWithLayout, layout_data};
 use jayjay_core::JayError;
-use jayjay_core::dag::DagLayout;
 
 #[uniffi::export]
 fn compose_bisect_range(good: String, bad: String, range: String) -> Result<String, JayError> {
@@ -716,14 +715,35 @@ impl JayJayRepo {
     /// One crossing for the graph and its layout, so the shell never sends the entries back.
     fn log_graph_with_layout(&self, revset: String) -> Result<GraphWithLayout, JayError> {
         let entries = self.inner.log_graph(&revset)?;
-        let dag_layout = DagLayout::compute(&entries);
-        let selection = Arc::new(DagSelectionGraph::from_entries(&entries, &dag_layout));
-        let layout = layout_data(dag_layout);
+        let synthetic_elided_nodes = self.inner.log_graph_synthetic_elided_nodes()?;
+        let layout = layout_data(&entries, synthetic_elided_nodes);
+        let selection = Arc::new(DagSelectionGraph::from_entries(&entries, &layout));
         Ok(GraphWithLayout {
             entries,
             layout,
             selection,
         })
+    }
+
+    /// `ui.log-synthetic-elided-nodes` for this repository, to pass into `compute_dag_layout`.
+    fn log_graph_synthetic_elided_nodes(&self) -> Result<bool, JayError> {
+        self.inner.log_graph_synthetic_elided_nodes()
+    }
+
+    /// Runs a progressive graph-load session, delivering each snapshot and terminal event to
+    /// `observer` as it is published. Blocks the calling thread for the session's lifetime, so the
+    /// shell calls it off its UI thread; `token` cancels it. Each snapshot carries its own layout,
+    /// so the shell renders without a second layout round trip.
+    fn start_log_graph(
+        &self,
+        request: crate::log_graph::LogGraphRequest,
+        token: Arc<crate::log_graph::JayJayGraphLoadToken>,
+        observer: Arc<dyn crate::log_graph::LogGraphObserver>,
+    ) {
+        self.inner
+            .start_log_graph(request.into(), token.inner.clone(), move |event| {
+                observer.on_event(event.into());
+            });
     }
 
     fn show(&self, rev: String) -> Result<ChangeDetail, JayError> {
