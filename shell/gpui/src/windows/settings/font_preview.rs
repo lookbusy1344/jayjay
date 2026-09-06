@@ -13,7 +13,8 @@ use crate::diff::file_status;
 use crate::diff::line::{content_row, gutter_cell, line_bg_color};
 use crate::repo::window::ref_chips;
 use crate::repo::window::{
-    DagNodeStyle, LinePattern, NodeFlags, id_cell, paint_node, stroke_line_pattern,
+    DagNodeStyle, LinePattern, NodeFlags, PREFERRED_NODE_RADIUS, id_cell, paint_node,
+    stroke_line_pattern,
 };
 use crate::ui::primitives::capsule;
 
@@ -213,9 +214,10 @@ fn specimen_change_row(change: &SpecimenChange, ix: usize, count: usize, pt: &Th
             ..NodeFlags::default()
         },
         pt,
+        PREFERRED_NODE_RADIUS,
     );
     let node = DagNodeStyle {
-        radius: DagNodeStyle::radius(node.shape, false),
+        radius: DagNodeStyle::radius(node.shape, false, PREFERRED_NODE_RADIUS),
         ..node
     };
     row.child(specimen_graph_lane(ix > 0, ix + 1 < count, node, pt))

@@ -21,6 +21,7 @@ gpui = { workspace = true }
 # windowing backends (no-ops elsewhere). Without them the Linux binary cannot open a window.
 gpui_platform = { workspace = true, features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 clap = { workspace = true }
+futures = { workspace = true }
 sha2 = { workspace = true }
 uuid = { workspace = true }
 jiff = { workspace = true }

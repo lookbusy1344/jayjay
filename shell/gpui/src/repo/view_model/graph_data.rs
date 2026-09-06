@@ -6,7 +6,7 @@ use std::sync::Arc;
 pub struct GraphData {
     pub changes: Arc<Vec<ChangeInfo>>,
     pub entries: Arc<Vec<GraphEntry>>,
-    pub(crate) dag_layout: Arc<DagLayout>,
+    pub dag_layout: Arc<DagLayout>,
     pub(crate) bookmarks: Arc<Vec<BookmarkInfo>>,
     pub(crate) tags: Arc<Vec<TagInfo>>,
     pub workspaces: Arc<Vec<WorkspaceInfo>>,
