@@ -32,6 +32,7 @@ extension RepoViewModel {
 
     @MainActor
     func forgetWorkspace(_ workspace: WorkspaceInfo, deleteFromDisk: Bool) async -> Bool {
+        cancelGraphLoadForMutation()
         lastInternalMutationAt = Date()
         do {
             let warning = try await awaitRepoTask {
