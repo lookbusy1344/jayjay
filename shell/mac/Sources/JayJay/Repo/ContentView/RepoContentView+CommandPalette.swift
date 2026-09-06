@@ -24,9 +24,12 @@ extension RepoContentView {
     private var viewPaletteItems: [CommandPaletteItem] {
         var items: [CommandPaletteItem] = []
         items.append(CommandPaletteItem(
-            title: "Refresh", icon: "arrow.triangle.2.circlepath", category: "View", shortcut: "⌘R"
+            title: viewModel.graphLoadActionLabel,
+            icon: "arrow.triangle.2.circlepath",
+            category: "View",
+            shortcut: "⌘R"
         ) {
-            viewModel.refresh()
+            viewModel.refreshOrCancel()
         })
         items.append(CommandPaletteItem(
             title: settings.sidebarHidden ? "Show Sidebar" : "Hide Sidebar",
@@ -91,7 +94,7 @@ extension RepoContentView {
         let presetFilters = RevsetFilterPresets.all.map { ("Show \($0.label)", $0.revset) }
         for (label, revset) in presetFilters + [
             ("Show Mutable", "mutable()"),
-            ("Reset Filter", RepoViewModel.buildDefaultRevset())
+            ("Reset Filter", "")
         ] {
             items.append(CommandPaletteItem(
                 title: label,

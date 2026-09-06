@@ -4,28 +4,23 @@ import XCTest
 
 @MainActor
 final class DAGPerformanceTests: XCTestCase {
-    func testLargeGraphLaneProjection() {
-        let layout = DAGLayout(entries: Self.entries)
-        let options = XCTMeasureOptions()
-        options.iterationCount = 3
-        measure(metrics: [XCTClockMetric()], options: options) {
-            let start = ContinuousClock.now
-            var total = 0
-            for _ in 0 ..< 20 {
-                for lane in 0 ..< 32 {
-                    total += layout.displayLane(for: lane)
-                }
-            }
-            XCTAssertEqual(total, 1800)
-            XCTAssertLessThan(start.duration(to: .now), .milliseconds(200))
-        }
-    }
+    private static let rowCount = 12000
+    private static let headCount = 32
+    private static let sidebarWidth: CGFloat = 320
+    private static let measurementIterations = 3
+    private static let sampledTargetCount = 20
+    private static let maximumMenuEligibilityDuration = Duration.milliseconds(200)
 
     func testLargeGraphRowMenuEligibility() {
-        let layout = DAGLayout(entries: Self.entries)
         let selectionGraph = DagSelectionGraph(entries: Self.entries)
+        let layout = DAGLayout(entries: Self.entries)
+        let geometry = DAGGeometry(
+            logicalColumnCount: layout.logicalColumnCount,
+            availableSidebarWidth: Self.sidebarWidth
+        )
         let options = XCTMeasureOptions()
-        options.iterationCount = 3
+        options.iterationCount = Self.measurementIterations
+
         measure(metrics: [XCTClockMetric()], options: options) {
             let start = ContinuousClock.now
             let viewModel = DAGViewModel(
@@ -41,18 +36,18 @@ final class DAGPerformanceTests: XCTestCase {
                     graph: selectionGraph,
                     entries: Self.entries,
                     selectedCommitIds: ["commit-0"]
-                )
+                ),
+                geometry: geometry
             )
-            for target in Self.entries.prefix(20) {
+            for target in Self.entries.prefix(Self.sampledTargetCount) {
                 XCTAssertTrue(viewModel.canMergeSelectedChange(with: target.change))
             }
-            XCTAssertLessThan(start.duration(to: .now), .milliseconds(200))
+            XCTAssertLessThan(start.duration(to: .now), Self.maximumMenuEligibilityDuration)
         }
     }
 
     private static let entries: [GraphEntry] = {
-        let rowCount = 12000
-        let heads = (0 ..< 32).map { entry("head-\($0)", parents: ["commit-\(rowCount - 1 - $0)"]) }
+        let heads = (0 ..< headCount).map { entry("head-\($0)", parents: ["commit-\(rowCount - 1 - $0)"]) }
         let chain = (0 ..< rowCount).map { index in
             entry("\(index)", parents: index + 1 < rowCount ? ["commit-\(index + 1)"] : [])
         }

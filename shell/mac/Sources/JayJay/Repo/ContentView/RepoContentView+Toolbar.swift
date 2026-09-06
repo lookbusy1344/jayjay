@@ -41,9 +41,14 @@ extension RepoContentView {
             )
             toolbarButton(
                 .refresh,
-                help: "Refresh (⌘R)",
-                action: { viewModel.refresh() },
-                label: { RefreshSpinner(animating: viewModel.isRefreshingInFlight) }
+                help: "\(viewModel.graphLoadActionLabel) (⌘R)",
+                action: { viewModel.refreshOrCancel() },
+                label: {
+                    RefreshSpinner(
+                        animating: viewModel.isRefreshingInFlight,
+                        label: viewModel.graphLoadActionLabel
+                    )
+                }
             )
             .keyboardShortcut("r")
             syncButton(.pull, inFlight: viewModel.isPullingInFlight) {

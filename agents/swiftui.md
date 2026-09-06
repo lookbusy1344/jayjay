@@ -59,8 +59,8 @@ The ViewModel owns `JayJayRepo`; all jj operations go through it. `Core/` holds 
 ## Rendering Performance
 
 - Keep row rendering and menu eligibility cheap: compute whole-graph indexes, lane aggregates, and selection ancestry once per input snapshot, not per row. Computed properties do not cache automatically, and context-menu builders may run before the menu opens. Invalidate cached results when any of their inputs change.
-- Store geometry used only for drag hit-testing in a non-observable reference such as `DAGRowFrameCache`; publishing those measurements back into view state can create layout feedback. Use observable state only when the measurement must change rendered output.
-- Verify DAG hot-path changes with `DAGPerformanceTests` (12k-change fixture) and frame-measurement changes with `DAGRowFrameCacheTests`, both in `shell/mac/Tests/JayJayTests/`. These cover computation cost and view invalidation, not end-to-end keyboard or scrolling latency; measure the affected interaction separately when claiming a responsiveness improvement.
+- Derive graph drawing and drag hit-testing from the same immutable `DAGGeometry`; do not publish row-frame measurements back into view state, because that can create layout feedback. Use observable geometry only when a measurement must change rendered output.
+- Verify DAG hot-path changes with `DAGPerformanceTests` (12k-change fixture) and graph-width/hit-testing changes with `DAGGeometryTests`, both in `shell/mac/Tests/JayJayTests/`. These cover computation cost and deterministic geometry, not end-to-end keyboard or scrolling latency; measure the affected interaction separately when claiming a responsiveness improvement.
 
 ## Window Lifecycle
 
