@@ -55,11 +55,13 @@ pub use merge_editor::{MergeEditorHunkExt, MergeScrollMap};
 pub(crate) use repo::jj_binary;
 #[cfg(feature = "repository")]
 pub use repo::{
-    AiProvider, DEFAULT_REVSET, DEFAULT_REVSET_DEPTH, DiffExcerpt, Repo, ReviewNotesReport,
-    ReviewOutputFormat, RevsetPreset, SyncToken, add_review_note, ancestors_revset,
-    branch_name_slug, build_default_revset, check_gh_environment, check_glab_environment,
-    check_jj_environment, check_origin_environment, default_revset_depth, find_existing_binary,
-    home_dir, init_jj_git_repo, is_executable_file, is_valid_bookmark_name,
+    AiProvider, BACKGROUND_LOG_BATCH_ROWS, DEFAULT_REVSET, DEFAULT_REVSET_DEPTH, DiffExcerpt,
+    EmptyStateUpdate, FIRST_RESULT_BUDGET, GraphLoadToken, INITIAL_LOG_BATCH_ROWS, LogGraphEvent,
+    LogGraphProgress, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo,
+    ReviewNotesReport, ReviewOutputFormat, RevsetPreset, SyncToken, add_review_note,
+    ancestors_revset, branch_name_slug, build_default_revset, check_gh_environment,
+    check_glab_environment, check_jj_environment, check_origin_environment, default_revset_depth,
+    find_existing_binary, home_dir, init_jj_git_repo, is_executable_file, is_valid_bookmark_name,
     is_valid_workspace_name, login_shell, login_shell_path, mark_review_file, resolve_review_note,
     review_display_group_map_from_hunk, review_notes_output, review_snapshot_from_hunk,
     review_status_output, revset_presets, unmark_review_files, workspace_primary_root,
