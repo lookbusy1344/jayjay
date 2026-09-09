@@ -44,6 +44,9 @@ impl RepoWindow {
             vm.multi_selection_primary_index()
         } {
             self.select_change(selected, cx);
+        } else if self.vm.read(cx).focused_revision.is_some() {
+            // Lowest-priority Escape: after any overlay and a multi-selection collapse, clear focus.
+            self.clear_focus(cx);
         } else {
             return false;
         }
