@@ -185,14 +185,16 @@ final class DAGViewModelTests: XCTestCase {
 
         let refreshed = makeViewModel(entries: [first, second], selectedId: "first")
         XCTAssertNil(refreshed.change(for: "descendant"))
-        XCTAssertTrue(refreshed.canMergeSelectedChange(with: indirect.change))
+        // The refreshed graph dropped the descendant, so it is no longer a merge target.
+        XCTAssertFalse(refreshed.canMergeSelectedChange(with: indirect.change))
         XCTAssertFalse(original.canMergeSelectedChange(with: indirect.change))
 
         let batch = makeViewModel(
             entries: entries, selectedId: "first", selectedIds: ["first", "second"]
         )
         XCTAssertTrue(batch.canMergeSelection)
-        XCTAssertTrue(batch.canMergeSelectedChange(with: first.change))
+        // A change already in the selection is not itself a merge target.
+        XCTAssertFalse(batch.canMergeSelectedChange(with: first.change))
         XCTAssertFalse(batch.canRebaseSelection(onto: indirect.change))
         XCTAssertTrue(batch.canRebaseSelection(onto: missing.change))
     }

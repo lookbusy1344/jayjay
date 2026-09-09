@@ -49,6 +49,11 @@ fn ancestors_revset(commit_id: String) -> String {
 }
 
 #[uniffi::export]
+fn focus_revset(base: String, target: String) -> String {
+    jayjay_core::focus_revset(&base, &target)
+}
+
+#[uniffi::export]
 fn revset_presets() -> Vec<RevsetPreset> {
     jayjay_core::revset_presets().to_vec()
 }

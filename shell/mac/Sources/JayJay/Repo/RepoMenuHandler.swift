@@ -3,9 +3,10 @@ import SwiftUI
 @MainActor
 final class RepoMenuHandler: RepositoryMenuHandler {
     var onAction: ((MenuAction) -> Void)?
+    var canFocusSelectedChange = false
 
     enum MenuAction {
-        case commandPalette, undo, bookmarkManager, newWorkspace
+        case commandPalette, undo, bookmarkManager, newWorkspace, focusSelectedChange
     }
 
     func showCommandPalette() {
@@ -22,5 +23,9 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     func showNewWorkspace() {
         onAction?(.newWorkspace)
+    }
+
+    func focusSelectedChange() {
+        onAction?(.focusSelectedChange)
     }
 }

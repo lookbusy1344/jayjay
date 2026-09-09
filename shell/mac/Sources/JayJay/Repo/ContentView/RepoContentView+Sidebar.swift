@@ -46,6 +46,10 @@ extension RepoContentView {
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 Divider()
             }
+            if let revision = viewModel.focusedRevision {
+                focusPill(revision)
+                Divider()
+            }
             if let name = viewModel.pendingPushBookmark {
                 pushFollowUpBanner(name)
                 Divider()
@@ -74,24 +78,13 @@ extension RepoContentView {
                 prHostName: viewModel.prHostName,
                 conflictedBookmarkNames: viewModel.conflictedBookmarkNames,
                 workspacesByName: viewModel.workspacesByName,
-                onOpenWorkspace: { windowManager.openRepo($0.path) },
-                onAbandon: { requestAbandon($0) },
-                onAbandonSelection: { requestAbandonSelection($0) },
-                onSquashSelection: { requestSquashSelection($0) },
-                onCreateBookmark: { rev in presentBookmarkCreate(rev: rev) },
-                onCreateStackedPRs: { rev in presentStackedPr(rev: rev) },
-                onShowAncestors: { commitId in
-                    if previousAncestorFilter == nil {
-                        previousAncestorFilter = viewModel.revset
-                    }
-                    showRevsetFilter = true
-                    viewModel.applyRevset(ancestorsRevset(commitId: commitId), selecting: commitId)
-                },
-                onLoadMore: viewModel.graphPaused
-                    ? { viewModel.continueLoading() }
-                    : viewModel.canLoadMore ? { viewModel.loadMore() } : nil,
-                loadMoreLabel: viewModel.graphPaused ? "Continue Loading" : "Load More"
+                loadMoreLabel: viewModel.graphPaused ? "Continue Loading" : "Load More",
+                isFocused: viewModel.focusedRevision != nil,
+                isInteractionEnabled: !viewModel.isGraphAwaitingReplacement
             )
+            .opacity(viewModel.isGraphAwaitingReplacement ? 0.45 : 1)
+            .allowsHitTesting(!viewModel.isGraphAwaitingReplacement)
+            .accessibilityHidden(viewModel.isGraphAwaitingReplacement)
             if shouldShowCommitBox {
                 Divider()
                 CommitBox(
@@ -125,6 +118,31 @@ extension RepoContentView {
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
             .help("Dismiss")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Always-visible exit affordance: once focused the graph usually fits and the badges disappear,
+    /// so this stays outside the (closed-by-default) revset editor.
+    func focusPill(_ revision: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "scope").jayjayFont(11).foregroundStyle(Color.accentColor)
+            Text("Focused").jayjayFont(11).foregroundStyle(.secondary)
+            Text(String(revision.prefix(12)))
+                .jayjayFont(11, weight: .medium, design: .monospaced)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                viewModel.clearFocus()
+            } label: {
+                Image(systemName: "xmark").jayjayFont(10)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Clear focus")
+            .accessibilityLabel("Clear focus")
+            .accessibilityIdentifier(AID.DAG.clearFocus)
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
         .glassEffect(in: RoundedRectangle(cornerRadius: 8))

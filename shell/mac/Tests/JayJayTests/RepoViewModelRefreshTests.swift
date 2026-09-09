@@ -168,6 +168,7 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
             generation: generation,
             preferredCommitId: nil,
             preferredRev: nil,
+            selectionBaseline: nil,
             revset: "all()",
             isAutoTriggered: false
         )

@@ -4,10 +4,12 @@ import SwiftUI
 /// Actions the Repository menu can invoke on the active window.
 @MainActor
 protocol RepositoryMenuHandler: AnyObject {
+    var canFocusSelectedChange: Bool { get }
     func showCommandPalette()
     func showUndo()
     func showBookmarkManager()
     func showNewWorkspace()
+    func focusSelectedChange()
 }
 
 /// Tracks the active repo window's path, settings, and menu handler.
@@ -19,6 +21,7 @@ final class ActiveRepoTracker {
 
     var repoPath: String?
     var settings: AppSettings?
+    var canFocusSelectedChange = false
 
     /// The handler for the currently active window.
     var handler: RepositoryMenuHandler? {
@@ -38,8 +41,10 @@ final class ActiveRepoTracker {
                 guard let window = notification.object as? NSWindow else { return }
                 if let path = window.representedURL?.path {
                     self?.repoPath = path
+                    self?.canFocusSelectedChange = self?.handlers[path]?.value?.canFocusSelectedChange ?? false
                 } else if window.identifier?.rawValue == AppWindows.repoList {
                     self?.repoPath = nil
+                    self?.canFocusSelectedChange = false
                 }
             }
         }
@@ -49,6 +54,12 @@ final class ActiveRepoTracker {
         self.repoPath = repoPath
         self.settings = settings
         handlers[repoPath] = WeakRef(handler)
+        canFocusSelectedChange = handler.canFocusSelectedChange
+    }
+
+    func updateFocusEligibility(repoPath: String, canFocus: Bool) {
+        guard self.repoPath == repoPath else { return }
+        canFocusSelectedChange = canFocus
     }
 
     private struct WeakRef {

@@ -1,28 +1,6 @@
+import AppKit
 import JayJayCore
 import SwiftUI
-
-enum DAGNodeLayerContent: Equatable {
-    case nodeOnly
-    case nodeAndOverflow
-    case overflowOnly
-
-    var includesNode: Bool {
-        self != .overflowOnly
-    }
-
-    var includesOverflow: Bool {
-        self != .nodeOnly
-    }
-}
-
-func dagNodeLayerContent(
-    isGraphClipped: Bool,
-    nodeTrailingX: CGFloat,
-    overflowLeadingX: CGFloat
-) -> DAGNodeLayerContent {
-    guard isGraphClipped else { return .nodeOnly }
-    return nodeTrailingX + dagOverflowNodeGap < overflowLeadingX ? .nodeAndOverflow : .overflowOnly
-}
 
 extension DAGRow {
     var graphColumn: some View {
@@ -197,25 +175,20 @@ extension DAGRow {
             // The node and overflow marker sit above the fade; when they would collide, the marker
             // represents the off-screen node instead of relocating that node into a visible lane.
             .overlay {
-                nodeLayer(myX: myX, nodeY: nodeY, nodeStyle: nodeStyle, width: geo.size.width)
+                nodeLayer(myX: myX, nodeY: nodeY, nodeStyle: nodeStyle, width: geo.size.width, badgeHovered: badgeHovered)
             }
             .clipped()
         }
     }
 
-    private func nodeLayer(myX: CGFloat, nodeY: CGFloat, nodeStyle: DAGNodeStyle, width: CGFloat) -> some View {
+    private func nodeLayer(myX: CGFloat, nodeY: CGFloat, nodeStyle: DAGNodeStyle, width: CGFloat, badgeHovered: Bool) -> some View {
         Canvas { ctx, _ in
-            let arm = dagOverflowMarkerSize / 2
-            // Anchor the badge by its disc so the whole circle clears the column edge, then place
-            // the chevron centred in that disc.
-            let haloCenterX = width - dagOverflowMarkerInset - dagOverflowMarkerHaloRadius
-            let tipX = haloCenterX + (arm + dagOverflowChevronGap) / 2
-            let overflowLeadingX = tipX - arm - dagOverflowChevronGap
-            let content = dagNodeLayerContent(
+            let badge = dagOverflowBadgeLayout(
                 isGraphClipped: viewModel.isGraphClipped,
                 nodeTrailingX: myX + nodeStyle.radius,
-                overflowLeadingX: overflowLeadingX
+                width: width
             )
+            let content = badge.content
             let nodeRect = CGRect(
                 x: myX - nodeStyle.radius,
                 y: nodeY - nodeStyle.radius,
@@ -263,28 +236,94 @@ extension DAGRow {
             }
 
             guard content.includesOverflow else { return }
-            let markerColor = AppColors.dagOverflowMarker(viewModel.colorScheme)
-            let haloCenter = CGPoint(x: haloCenterX, y: nodeY)
-            let haloRect = CGRect(
-                x: haloCenter.x - dagOverflowMarkerHaloRadius,
-                y: haloCenter.y - dagOverflowMarkerHaloRadius,
-                width: dagOverflowMarkerHaloRadius * 2,
-                height: dagOverflowMarkerHaloRadius * 2
-            )
-            let haloPath = Path(ellipseIn: haloRect)
-            // Opaque backdrop fill hides any lane line under the badge; the ring frames the chevron.
-            ctx.fill(haloPath, with: .color(Color(nsColor: .windowBackgroundColor)))
-            ctx.stroke(haloPath, with: .color(markerColor.opacity(0.35)), style: dagSolidStroke)
-            for chevron in 0 ..< 2 {
-                let x = tipX - CGFloat(chevron) * dagOverflowChevronGap
-                let path = Path { p in
-                    p.move(to: CGPoint(x: x - arm, y: nodeY - arm))
-                    p.addLine(to: CGPoint(x: x, y: nodeY))
-                    p.addLine(to: CGPoint(x: x - arm, y: nodeY + arm))
+            drawOverflowBadge(ctx, badge: badge, nodeY: nodeY, badgeHovered: badgeHovered)
+        }
+    }
+
+    private func drawOverflowBadge(
+        _ ctx: GraphicsContext,
+        badge: DAGOverflowBadgeLayout,
+        nodeY: CGFloat,
+        badgeHovered: Bool
+    ) {
+        let markerColor = AppColors.dagOverflowMarker(viewModel.colorScheme)
+        // The resting badge is a quiet marker; hover advertises the focus action by growing and filling
+        // the disc and brightening its ring.
+        let haloRadius = dagOverflowMarkerHaloRadius + (badgeHovered ? 1.5 : 0)
+        let haloRect = CGRect(
+            x: badge.haloCenterX - haloRadius,
+            y: nodeY - haloRadius,
+            width: haloRadius * 2,
+            height: haloRadius * 2
+        )
+        let haloPath = Path(ellipseIn: haloRect)
+        // Opaque backdrop fill hides any lane line under the badge; the ring frames the chevron.
+        ctx.fill(haloPath, with: .color(Color(nsColor: .windowBackgroundColor)))
+        if badgeHovered {
+            ctx.fill(haloPath, with: .color(markerColor.opacity(0.15)))
+        }
+        ctx.stroke(haloPath, with: .color(markerColor.opacity(badgeHovered ? 1 : 0.35)), style: dagSolidStroke)
+        for chevron in 0 ..< 2 {
+            let x = badge.tipX - CGFloat(chevron) * dagOverflowChevronGap
+            let path = Path { p in
+                p.move(to: CGPoint(x: x - badge.arm, y: nodeY - badge.arm))
+                p.addLine(to: CGPoint(x: x, y: nodeY))
+                p.addLine(to: CGPoint(x: x - badge.arm, y: nodeY + badge.arm))
+            }
+            ctx.stroke(path, with: .color(markerColor), style: dagOverflowMarkerStroke)
+        }
+    }
+
+    /// Transparent tap target over the overflow badge, present exactly where the badge is drawn. Its
+    /// hit region is wider than the disc for reliable pointer and VoiceOver reach but clears the row's
+    /// own node, which sits far to the left.
+    @ViewBuilder
+    var focusHitTarget: some View {
+        let geometry = viewModel.geometry
+        let nodeColumn = Int(viewModel.row?.nodeColumn ?? 0)
+        let myX = geometry.xPosition(forColumn: nodeColumn)
+        let nodeRadius = DAGNodeStyle.resolve(change: change, radius: geometry.nodeRadius).radius
+        if let onFocus,
+           let centerX = overflowBadgeCenterX(
+               myX: myX,
+               nodeRadius: nodeRadius,
+               width: viewModel.graphWidth
+           )
+        {
+            Button(action: onFocus) {
+                Color.clear
+                    .frame(width: dagOverflowMarkerTapSize, height: dagOverflowMarkerTapSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .position(x: dagRowLeadingPadding + centerX, y: dagNodeCenterY)
+            .help("Focus on this change's history")
+            .accessibilityLabel("Focus on \(change.selectionRevision)")
+            .accessibilityIdentifier(AID.DAG.focus(String(change.selectionRevision.prefix(12))))
+            .onHover { hovering in
+                badgeHovered = hovering
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
                 }
-                ctx.stroke(path, with: .color(markerColor), style: dagOverflowMarkerStroke)
+            }
+            .onDisappear {
+                guard badgeHovered else { return }
+                badgeHovered = false
+                NSCursor.pop()
             }
         }
+    }
+
+    /// The badge's disc-center X when the trailing overflow marker is actually drawn, else nil.
+    private func overflowBadgeCenterX(myX: CGFloat, nodeRadius: CGFloat, width: CGFloat) -> CGFloat? {
+        let badge = dagOverflowBadgeLayout(
+            isGraphClipped: viewModel.isGraphClipped,
+            nodeTrailingX: myX + nodeRadius,
+            width: width
+        )
+        return badge.content.includesOverflow ? badge.haloCenterX : nil
     }
 
     private func overflowFadeMask(width: CGFloat) -> some View {

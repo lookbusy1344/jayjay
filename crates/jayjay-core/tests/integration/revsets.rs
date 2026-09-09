@@ -1,7 +1,8 @@
 use std::fs;
 
 use jayjay_core::{
-    DEFAULT_REVSET_DEPTH, Repo, build_default_revset, combined_diff_revsets, revset_presets,
+    DEFAULT_REVSET_DEPTH, Repo, build_default_revset, combined_diff_revsets, focus_revset,
+    revset_presets,
 };
 use jj_test::{init_jj_repo, run_jj};
 
@@ -220,4 +221,51 @@ fn ancestors_filter_includes_merge_parents_but_excludes_other_heads() {
     descriptions.sort_unstable();
     assert_eq!(descriptions, ["base", "left", "merge", "right"]);
     assert!(changes.iter().any(|c| c.commit_id.id == target));
+}
+
+#[test]
+fn focus_revset_scopes_base_to_target_lineage() {
+    let temp_dir = init_jj_repo();
+    let repo_path = temp_dir.path().join("repo");
+    let repo_str = repo_path.to_str().expect("repo path utf-8");
+
+    run_jj(&["-R", repo_str, "new", "@", "-m", "feature a"]);
+    run_jj(&["-R", repo_str, "new", "@-", "-m", "feature b"]);
+
+    let repo = Repo::open(&repo_path).expect("open repo");
+    let commit_id = |description: &str| {
+        repo.log("all()")
+            .expect("load all")
+            .into_iter()
+            .find(|change| change.description.trim() == description)
+            .unwrap_or_else(|| panic!("missing {description}"))
+            .commit_id
+            .id
+    };
+    let feature_a = commit_id("feature a");
+
+    let focused = repo
+        .log(&focus_revset("all()", &feature_a))
+        .expect("evaluate focused revset");
+
+    assert!(
+        focused
+            .iter()
+            .any(|change| change.description.trim() == "feature a"),
+        "focus must include the target"
+    );
+    assert!(
+        focused
+            .iter()
+            .all(|change| change.description.trim() != "feature b"),
+        "focus must exclude unrelated heads"
+    );
+
+    let base = repo.log("all()").expect("evaluate base revset");
+    for change in &focused {
+        assert!(
+            base.iter().any(|b| b.commit_id.id == change.commit_id.id),
+            "focused set must be a subset of the base"
+        );
+    }
 }
