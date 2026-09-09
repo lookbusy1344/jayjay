@@ -3,9 +3,10 @@ import SwiftUI
 @MainActor
 final class RepoMenuHandler: RepositoryMenuHandler {
     var onAction: ((MenuAction) -> Void)?
+    var canFocusSelectedChange = false
 
     enum MenuAction {
-        case commandPalette, undo, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport
+        case commandPalette, undo, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange
     }
 
     func showCommandPalette() {
@@ -34,5 +35,9 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     func showPullRequestImport() {
         onAction?(.pullRequestImport)
+    }
+
+    func focusSelectedChange() {
+        onAction?(.focusSelectedChange)
     }
 }

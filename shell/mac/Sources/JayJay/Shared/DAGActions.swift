@@ -28,6 +28,8 @@ protocol DAGActions: AnyObject {
     var canLoadMore: Bool { get }
     var fixUnavailableReason: String? { get }
     func loadMore()
+    func focus(on revision: String)
+    func clearFocus()
 }
 
 extension DAGActions {

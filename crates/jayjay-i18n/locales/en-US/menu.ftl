@@ -10,6 +10,7 @@ menu-repository = Repository
 menu-command-palette = Command Palette
 menu-undo-last-operation = Undo Last Operation
 menu-filter-by-revset-ellipsis = Filter by Revset…
+menu-hide-unrelated-changes = Hide Unrelated Changes
 menu-bookmark-manager = Bookmark Manager
 menu-repo-overview = Repo Overview
 menu-new-workspace-ellipsis = New Workspace…
