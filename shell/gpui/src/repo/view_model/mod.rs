@@ -122,6 +122,38 @@ pub struct LoadingState {
     pub graph_row_ceiling: u32,
 }
 
+/// A focus target pinned across progressive graph snapshots. Matched by exact commit id when known
+/// (so a divergent change's other versions never satisfy it), falling back to its revision string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingFocusTarget {
+    pub revision: SharedString,
+    pub commit_id: Option<String>,
+    /// Whether appearing should scroll the target into view. A focus transition reveals its target; a
+    /// plain reload only holds the existing selection and must not scroll away from where the user is.
+    pub reveals_on_appear: bool,
+}
+
+impl PendingFocusTarget {
+    pub(crate) fn matches(&self, change: &ChangeInfo) -> bool {
+        match &self.commit_id {
+            Some(commit_id) => &change.commit_id.id == commit_id,
+            None => {
+                change.change_id.id == self.revision.as_ref()
+                    || change.commit_id.id == self.revision.as_ref()
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct GraphReplacementBackup {
+    changes: Arc<Vec<ChangeInfo>>,
+    entries: Arc<Vec<GraphEntry>>,
+    dag_layout: Arc<DagLayout>,
+    selected: Option<usize>,
+    selected_changes: OrderedSelection<usize>,
+}
+
 pub struct RepoViewModel {
     pub repo: Option<Arc<Repo>>,
     pub(crate) repo_path: SharedString,
@@ -151,6 +183,19 @@ pub struct RepoViewModel {
     pub(crate) ignore_whitespace: bool,
     pub revset: SharedString,
     pub can_load_more: bool,
+    /// The change whose connected lineage the graph is scoped to, or `None` for the full base
+    /// `revset`. Focus composes an effective revset at request time; `revset` itself is untouched.
+    pub focused_revision: Option<SharedString>,
+    /// Exact commit identity captured when focus begins, used to validate every later focused refresh.
+    pub(crate) focused_commit_id: Option<String>,
+    /// Focus target awaiting its first appearance in a progressive snapshot. Descendants included by
+    /// `X::` can be emitted before X, so selection stays pending here rather than falling back to `@`.
+    pub(crate) pending_focus_target: Option<PendingFocusTarget>,
+    /// Set when a pinned focus target is selected so the window scrolls it into view exactly once.
+    pub(crate) pending_focus_reveal: Option<SharedString>,
+    /// The visible DAG belongs to the previous revset until the replacement query publishes a snapshot.
+    pub graph_awaiting_replacement: bool,
+    pub(crate) graph_replacement_backup: Option<GraphReplacementBackup>,
     pub(crate) detail_mode: DetailMode,
     pub(crate) annotate_lines: Option<Arc<Vec<AnnotationLine>>>,
     avatar_in_flight: HashSet<String>,
@@ -340,6 +385,12 @@ impl RepoViewModel {
             can_load_more: default_revset_depth(&revset)
                 .is_some_and(|depth| changes.len() >= depth as usize),
             revset,
+            focused_revision: None,
+            focused_commit_id: None,
+            pending_focus_target: None,
+            pending_focus_reveal: None,
+            graph_awaiting_replacement: false,
+            graph_replacement_backup: None,
             detail_mode: DetailMode::Diff,
             annotate_lines: None,
             avatar_in_flight: HashSet::new(),
@@ -392,6 +443,12 @@ impl RepoViewModel {
             ignore_whitespace: false,
             revset: build_default_revset(DEFAULT_REVSET_DEPTH).into(),
             can_load_more: false,
+            focused_revision: None,
+            focused_commit_id: None,
+            pending_focus_target: None,
+            pending_focus_reveal: None,
+            graph_awaiting_replacement: false,
+            graph_replacement_backup: None,
             detail_mode: DetailMode::Diff,
             annotate_lines: None,
             avatar_in_flight: HashSet::new(),

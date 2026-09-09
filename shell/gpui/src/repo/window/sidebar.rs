@@ -4,7 +4,9 @@ use gpui::{
     uniform_list,
 };
 
-use super::dag::{DagGeometry, dag_column};
+use super::dag::{
+    DagGeometry, OVERFLOW_BADGE_TAP_SIZE, dag_column, node_center_y, overflow_badge_center_x,
+};
 use super::dag_row::{ChipRightClick, DagDrop, DagRow, dag_row, row_background};
 use super::revset_filter::revset_filter_panel;
 use super::{ActivePane, RepoWindow};
@@ -29,6 +31,7 @@ pub(super) fn sidebar(
         default_revset,
         graph_load_slow,
         bookmarks,
+        graph_awaiting_replacement,
     ) = {
         let vm = view.vm.read(cx);
         (
@@ -40,6 +43,7 @@ pub(super) fn sidebar(
             vm.revset_depth().is_some(),
             vm.loading.graph_load_slow,
             vm.graph.bookmarks.clone(),
+            vm.graph_awaiting_replacement,
         )
     };
 
@@ -142,7 +146,13 @@ pub(super) fn sidebar(
                                     row.commit_id, entry.change.commit_id.id,
                                     "graph entries and DAG rows must remain index-aligned"
                                 );
-                                dag_column(entry, row, &dag_geometry, &t, row_bg)
+                                let col = dag_column(entry, row, &dag_geometry, &t, row_bg);
+                                match overflow_badge_center_x(row, &dag_geometry) {
+                                    Some(center_x) => {
+                                        focus_badge_overlay(col, center_x, &change, &t, cx)
+                                    }
+                                    None => col,
+                                }
                             })
                         });
                         dag_row(
@@ -176,6 +186,25 @@ pub(super) fn sidebar(
         no_scrollbar_gutter(list).h_full().into_any_element()
     };
 
+    let body = if graph_awaiting_replacement && !changes.is_empty() {
+        div()
+            .relative()
+            .size_full()
+            .child(div().size_full().opacity(0.45).child(body))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .occlude(),
+            )
+            .into_any_element()
+    } else {
+        body
+    };
+
     let show_commit_box = {
         let vm = view.vm.read(cx);
         vm.selected_change()
@@ -191,6 +220,9 @@ pub(super) fn sidebar(
         .bg(rgb(t.sidebar_bg));
     if let Some(filter) = revset_filter_panel(view, t, cx) {
         col = col.child(filter);
+    }
+    if let Some(revision) = view.vm.read(cx).focused_revision.clone() {
+        col = col.child(focus_pill(revision, t, cx));
     }
     if let Some(banner) = push_follow_up_banner(view, t, cx) {
         col = col.child(banner);
@@ -212,6 +244,79 @@ pub(super) fn sidebar(
         col = col.child(commit_box_editor(view, t, cx));
     }
     col.into_any_element()
+}
+
+/// Always-visible exit affordance while focused: once focused the graph usually fits and the badges
+/// disappear, so this sits outside the (closed-by-default) revset filter panel.
+fn focus_pill(revision: SharedString, t: &Theme, cx: &mut Context<RepoWindow>) -> AnyElement {
+    let short: SharedString = revision.chars().take(12).collect::<String>().into();
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(12.))
+        .py(px(6.))
+        .border_b_1()
+        .border_color(rgb(t.row_border))
+        .bg(rgb(t.sidebar_bg))
+        .text_size(ui_font_size(FONT_META))
+        .text_color(rgb(t.fg_dim))
+        .debug_selector(|| "focus-pill".to_owned())
+        .child(icon_label(glyph::FILTER, "Focused", 12., t.selected_accent))
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .font_family(fonts::mono())
+                .text_color(rgb(t.fg))
+                .child(short),
+        )
+        .child(div().flex_1())
+        .child(
+            icon_button("focus-clear", glyph::X, 12., 24., 24., t.fg_dim, t)
+                .debug_selector(|| "focus-clear".to_owned())
+                .tooltip(text_tooltip("Clear focus"))
+                .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                    view.clear_focus(cx);
+                })),
+        )
+        .into_any_element()
+}
+
+/// Wrap a clipped row's graph canvas with a transparent tap target over its overflow badge that
+/// focuses the change's lineage. GPUI canvases are not hit-testable, so the affordance is a sibling
+/// interactive element positioned on the badge rather than a click read from canvas coordinates.
+fn focus_badge_overlay(
+    col: AnyElement,
+    center_x: f32,
+    change: &jayjay_core::ChangeInfo,
+    theme: &Theme,
+    cx: &mut Context<RepoWindow>,
+) -> AnyElement {
+    let revision: SharedString = crate::repo::revset::change_revision(change).into();
+    let id = SharedString::from(format!("focus-badge-{}", change.commit_id.id));
+    let on_click = cx.listener(move |view, _ev: &ClickEvent, _w, cx| {
+        cx.stop_propagation();
+        view.focus_on_revision(revision.clone(), cx);
+    });
+    div()
+        .relative()
+        .flex_none()
+        .child(col)
+        .child(
+            div()
+                .id(id)
+                .absolute()
+                .top(px(node_center_y(theme) - OVERFLOW_BADGE_TAP_SIZE / 2.0))
+                .left(px(center_x - OVERFLOW_BADGE_TAP_SIZE / 2.0))
+                .size(px(OVERFLOW_BADGE_TAP_SIZE))
+                .cursor_pointer()
+                .tooltip(text_tooltip("Focus on this change's history"))
+                .on_click(on_click),
+        )
+        .into_any_element()
 }
 
 fn push_follow_up_banner(

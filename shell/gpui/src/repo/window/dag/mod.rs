@@ -223,7 +223,7 @@ pub(super) fn dag_column(
     } = geometry.row_graph_width(row.graph_column_count);
     let lane_pitch = geometry.lane_pitch;
     let node_radius = style.radius;
-    let node_top_offset = NODE_TOP_OFFSET + (theme.scaled_font_size(10.) - 10.) / 2.;
+    let node_top_offset = node_center_y(theme);
     let x_position =
         move |column: u32| -> f32 { LEADING_PAD + column as f32 * lane_pitch + lane_pitch / 2.0 };
 
@@ -489,6 +489,25 @@ fn paint_overflow_marker(
         stroke_line_pattern(window, x - arm, y - arm, x, y, color, LinePattern::Solid);
         stroke_line_pattern(window, x, y, x - arm, y + arm, color, LinePattern::Solid);
     }
+}
+
+/// Square hit region for the overflow badge's focus button, positioned clear of the node on the left.
+pub(super) const OVERFLOW_BADGE_TAP_SIZE: f32 = 24.0;
+
+pub(super) fn node_center_y(theme: &Theme) -> f32 {
+    NODE_TOP_OFFSET + (theme.scaled_font_size(10.) - 10.) / 2.
+}
+
+/// Center x (within the row's graph column) of the overflow badge when the trailing marker is drawn
+/// for this row, else `None`. The focus tap target reads this so it sits exactly on the badge. A
+/// clipped row always draws the marker (only the node may be replaced), so clipping is the gate.
+pub(super) fn overflow_badge_center_x(row: &DagRowShape, geometry: &DagGeometry) -> Option<f32> {
+    let RowGraphWidth { width, is_clipped } = geometry.row_graph_width(row.graph_column_count);
+    if !is_clipped {
+        return None;
+    }
+    let tip_x = width - OVERFLOW_MARKER_INSET;
+    Some(tip_x - (OVERFLOW_MARKER_SIZE / 2.0 + OVERFLOW_CHEVRON_GAP) / 2.0)
 }
 
 fn line_pattern_for(cell: &DagVerticalCell) -> Option<LinePattern> {

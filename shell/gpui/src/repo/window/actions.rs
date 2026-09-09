@@ -429,6 +429,38 @@ impl RepoWindow {
         vm.update(cx, |vm, cx| vm.continue_loading(cx));
     }
 
+    pub(crate) fn focus_on_revision(&mut self, revision: SharedString, cx: &mut Context<Self>) {
+        let vm = self.vm.clone();
+        vm.update(cx, |vm, cx| vm.focus_on(revision, cx));
+    }
+
+    pub(crate) fn focus_selected_change(&mut self, cx: &mut Context<Self>) {
+        let vm = self.vm.clone();
+        vm.update(cx, |vm, cx| vm.focus_selected(cx));
+    }
+
+    pub(crate) fn clear_focus(&mut self, cx: &mut Context<Self>) {
+        let vm = self.vm.clone();
+        vm.update(cx, |vm, cx| vm.clear_focus(cx));
+    }
+
+    /// Scroll a just-selected focus target into view. Runs from the VM observer after a focused
+    /// refresh selects the pinned change, so the row is revealed exactly once when it loads.
+    pub(crate) fn apply_pending_focus_reveal(&mut self, cx: &mut Context<Self>) {
+        let revision = self.vm.update(cx, |vm, _| vm.take_pending_focus_reveal());
+        let Some(revision) = revision else {
+            return;
+        };
+        let ix = self.vm.read(cx).graph.changes.iter().position(|c| {
+            c.change_id.id == revision.as_ref() || c.commit_id.id == revision.as_ref()
+        });
+        if let Some(ix) = ix {
+            self.scrolls
+                .changes
+                .scroll_to_item(ix, ScrollStrategy::Center);
+        }
+    }
+
     pub(crate) fn mark_copied(&mut self, id: SharedString, cx: &mut Context<Self>) {
         self.feedback.recently_copied = Some(id.clone());
         cx.notify();
