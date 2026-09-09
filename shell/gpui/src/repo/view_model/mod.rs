@@ -1,5 +1,6 @@
 mod bisect_model;
 mod diff_cache;
+mod focus;
 mod graph_data;
 mod loaded_content;
 mod loaders;
@@ -22,6 +23,7 @@ mod tasks;
 
 pub use bisect_model::BisectModel;
 pub use diff_cache::DiffCache;
+pub(crate) use focus::{GraphReplacementBackup, PendingFocusTarget};
 pub use graph_data::GraphData;
 pub(crate) use loaded_content::DiffLoadState;
 pub use loaded_content::{LoadedDiff, LoadedReviewSnapshot, SvgPreviewContent};
