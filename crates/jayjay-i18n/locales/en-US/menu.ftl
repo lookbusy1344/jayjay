@@ -14,6 +14,7 @@ menu-reset-zoom = Reset Zoom
 menu-repository = Repository
 menu-command-palette = Command Palette
 menu-filter-by-revset-ellipsis = Filter by Revset…
+menu-hide-unrelated-changes = Hide Unrelated Changes
 menu-bookmark-manager = Bookmark Manager
 menu-repo-overview = Repo Overview
 menu-new-workspace-ellipsis = New Workspace…

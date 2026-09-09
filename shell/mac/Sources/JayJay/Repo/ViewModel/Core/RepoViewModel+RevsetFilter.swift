@@ -23,9 +23,13 @@ extension RepoViewModel {
     }
 
     private func reloadFilter(_ filter: RevsetFilterState, selecting revision: String) {
+        // A new base filter shows in full: a stale focus would silently scope it to an unrelated change.
+        focusedRevision = nil
+        focusedCommitId = nil
+        pendingFocusTarget = nil
         revsetFilter = filter
-        graphRowCeiling = 0
-        graphPaused = false
+        markGraphAwaitingReplacement()
+        resetGraphPaging()
         refresh(selecting: revision)
     }
 
