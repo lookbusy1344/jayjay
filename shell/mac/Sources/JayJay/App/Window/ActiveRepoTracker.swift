@@ -8,6 +8,7 @@ protocol RepositoryMenuHandler: AnyObject {
     var canViewRemoteRepository: Bool { get }
     func canPerformShortcut(_ shortcut: AppShortcut) -> Bool
     func performShortcut(_ shortcut: AppShortcut)
+    var canFocusSelectedChange: Bool { get }
     func showCommandPalette()
     func showOperationLog()
     func showRevsetFilter()
@@ -18,6 +19,7 @@ protocol RepositoryMenuHandler: AnyObject {
     var operationSteps: UndoState? { get }
     func undoOperation()
     func redoOperation()
+    func focusSelectedChange()
 }
 
 /// Tracks the active repo window's path, settings, and menu handler.
@@ -29,6 +31,7 @@ final class ActiveRepoTracker {
 
     var repoPath: String?
     var settings: AppSettings?
+    var canFocusSelectedChange = false
 
     var handler: RepositoryMenuHandler? {
         guard let repoPath, !keyWindowIsOverview else { return nil }
@@ -50,8 +53,10 @@ final class ActiveRepoTracker {
                 if let path = window.representedURL?.repositoryLocationPath {
                     self?.repoPath = path
                     self?.keyWindowIsOverview = self?.overviewWindows.contains(window) == true
+                    self?.canFocusSelectedChange = self?.handlers[path]?.value?.canFocusSelectedChange ?? false
                 } else if window.identifier?.rawValue == AppWindows.repoList {
                     self?.repoPath = nil
+                    self?.canFocusSelectedChange = false
                 }
             }
         }
@@ -62,6 +67,12 @@ final class ActiveRepoTracker {
         self.settings = settings
         keyWindowIsOverview = false
         handlers[repoPath] = WeakRef(handler)
+        canFocusSelectedChange = handler.canFocusSelectedChange
+    }
+
+    func updateFocusEligibility(repoPath: String, canFocus: Bool) {
+        guard self.repoPath == repoPath else { return }
+        canFocusSelectedChange = canFocus
     }
 
     func registerOverview(_ window: NSWindow) {

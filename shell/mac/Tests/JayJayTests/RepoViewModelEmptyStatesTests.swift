@@ -6,15 +6,16 @@ import XCTest
 final class RepoViewModelEmptyStatesTests: RepoViewModelTestCase {
     func testEmptyStatesEventCorrectsOnlyMatchingRows() throws {
         let viewModel = try XCTUnwrap(viewModel)
-        viewModel.graphEntries = [
+        viewModel.seedGraphEntriesForTesting([
             GraphEntry(change: mockChangeInfo(commitId: "merge", isEmpty: false), edges: []),
             GraphEntry(change: mockChangeInfo(commitId: "other", isEmpty: false), edges: [])
-        ]
+        ])
 
         let context = RepoGraphRefreshContext(
             generation: viewModel.graphRefreshGeneration,
             preferredCommitId: nil,
             preferredRev: nil,
+            selectionBaseline: nil,
             revset: "all()",
             isAutoTriggered: false
         )
@@ -29,14 +30,15 @@ final class RepoViewModelEmptyStatesTests: RepoViewModelTestCase {
 
     func testEmptyStatesFromASupersededGenerationIsIgnored() throws {
         let viewModel = try XCTUnwrap(viewModel)
-        viewModel.graphEntries = [
+        viewModel.seedGraphEntriesForTesting([
             GraphEntry(change: mockChangeInfo(commitId: "merge", isEmpty: false), edges: [])
-        ]
+        ])
 
         let staleContext = RepoGraphRefreshContext(
             generation: viewModel.graphRefreshGeneration &- 1,
             preferredCommitId: nil,
             preferredRev: nil,
+            selectionBaseline: nil,
             revset: "all()",
             isAutoTriggered: false
         )

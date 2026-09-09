@@ -34,6 +34,12 @@ struct RepositoryCommands: Commands {
             .keyboardShortcut(AppShortcut.operationLog)
             .disabled(tracker.handler == nil)
 
+            Button { tracker.handler?.focusSelectedChange() } label: {
+                Label(Localized.Menu.hideUnrelatedChanges, systemImage: "scope")
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .disabled(!tracker.canFocusSelectedChange)
+
             Divider()
 
             Button { tracker.handler?.showRevsetFilter() } label: {
