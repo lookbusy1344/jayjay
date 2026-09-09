@@ -358,6 +358,7 @@ impl RepoWindow {
             }
             this.sync_diff_edit_loaded_files(cx);
             this.sync_commit_box_from_working_copy(cx);
+            this.apply_pending_focus_reveal(cx);
             cx.notify();
         })
         .detach();
