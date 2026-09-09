@@ -4,6 +4,8 @@ mod style;
 
 #[cfg(test)]
 pub(in crate::repo::window) use column::main_row_bottom;
-pub(in crate::repo::window) use column::{DagGeometry, ELISION_BAND_HEIGHT, dag_column};
+pub(in crate::repo::window) use column::{
+    DagGeometry, ELISION_BAND_HEIGHT, OVERFLOW_BADGE_TAP_SIZE, dag_column, overflow_badge_center_x,
+};
 pub(crate) use paint::{LinePattern, paint_node, stroke_line_pattern};
 pub(crate) use style::{DagNodeStyle, NodeFill, NodeShape};

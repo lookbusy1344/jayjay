@@ -2,10 +2,10 @@ use gpui::{Action, App};
 
 use crate::app::actions::{
     CloseWindow, CopyDiffSelection, DiffEditCollapseAll, DiffEditExpandAll, FilterByRevset,
-    MergeNextHunk, MergePreviousHunk, MergeUseLeftHunk, MergeUseRightHunk, OpenBookmarkManager,
-    OpenCommandPalette, OpenFind, OpenKeyboardShortcuts, OpenOperationLog, OpenOverview,
-    OpenRepository, OpenSettings, Refresh, ResetZoom, SaveFileEditor, SaveNoteComposer,
-    ShowRepoInFileManager, ToggleSidebar, ZoomIn, ZoomOut,
+    FocusSelectedChange, MergeNextHunk, MergePreviousHunk, MergeUseLeftHunk, MergeUseRightHunk,
+    OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenKeyboardShortcuts, OpenOperationLog,
+    OpenOverview, OpenRepository, OpenSettings, Refresh, ResetZoom, SaveFileEditor,
+    SaveNoteComposer, ShowRepoInFileManager, ToggleSidebar, ZoomIn, ZoomOut,
 };
 use crate::app::key_caps::KeyCaps;
 
@@ -66,6 +66,7 @@ pub(super) const SECTIONS: &[ShortcutSection] = &[
         entries: &[
             ShortcutEntry::bound("Hide / Show Sidebar", &ToggleSidebar),
             ShortcutEntry::bound("Filter by Revset", &FilterByRevset),
+            ShortcutEntry::bound("Hide Unrelated Changes", &FocusSelectedChange),
             ShortcutEntry::bound("Zoom In", &ZoomIn),
             ShortcutEntry::bound("Zoom Out", &ZoomOut),
             ShortcutEntry::bound("Reset Zoom", &ResetZoom),

@@ -1,5 +1,8 @@
 use super::selection::SelectionCache;
-use super::{DiffCache, GraphData, LoadingState, NotesState, ShownDiff, StatsState};
+use super::{
+    DiffCache, GraphData, GraphReplacementBackup, LoadingState, NotesState, PendingFocusTarget,
+    ShownDiff, StatsState,
+};
 use crate::diff::{DetailMode, DiffViewMode};
 use gpui::SharedString;
 use jayjay_core::compare::CompareState;
@@ -34,6 +37,17 @@ pub struct RepoViewModel {
     pub(crate) ignore_whitespace: bool,
     pub revset_filter: RevsetFilterState,
     pub can_load_more: bool,
+    /// The change whose connected lineage the graph is scoped to, or `None` for the full base revset. Focus composes an effective revset at request time; the revset filter itself is untouched.
+    pub focused_revision: Option<SharedString>,
+    /// Exact commit identity captured when focus begins, used to validate every later focused refresh.
+    pub(crate) focused_commit_id: Option<String>,
+    /// Focus target awaiting its first appearance in a progressive snapshot. Descendants included by `X::` can be emitted before X, so selection stays pending here rather than falling back to `@`.
+    pub(crate) pending_focus_target: Option<PendingFocusTarget>,
+    /// Set when a pinned focus target is selected so the window scrolls it into view exactly once.
+    pub(crate) pending_focus_reveal: Option<SharedString>,
+    /// The visible DAG belongs to the previous revset until the replacement query publishes a snapshot.
+    pub graph_awaiting_replacement: bool,
+    pub(crate) graph_replacement_backup: Option<GraphReplacementBackup>,
     /// Loaded with the graph, not on each keystroke.
     pub(crate) vocabulary: RevsetVocabulary,
     pub(crate) detail_mode: DetailMode,
