@@ -28,6 +28,12 @@ struct RepositoryCommands: Commands {
             .keyboardShortcut(AppShortcut.undoLastOperation)
             .disabled(tracker.handler == nil)
 
+            Button { tracker.handler?.focusSelectedChange() } label: {
+                Label("Hide Unrelated Changes", systemImage: "scope")
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .disabled(!tracker.canFocusSelectedChange)
+
             Divider()
 
             Button { tracker.handler?.showRevsetFilter() } label: {
