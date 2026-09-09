@@ -4,10 +4,10 @@ use gpui::{
 
 use super::super::RepoWindow;
 use crate::app::actions::{
-    CopyDiffSelection, DiffEditCollapseAll, DiffEditExpandAll, ForgetStaleBookmarks,
-    GitFetchOrigin, GitPushDefault, NewWorkspace, OpenAbout, OpenBookmarkManager,
-    OpenCommandPalette, OpenFind, OpenOperationLog, OpenRemoteRepository, OpenRepoInEditor,
-    OpenRepoInTerminal, OpenSettings, Refresh, SaveFileEditor, SaveNoteComposer,
+    CopyDiffSelection, DiffEditCollapseAll, DiffEditExpandAll, FocusSelectedChange,
+    ForgetStaleBookmarks, GitFetchOrigin, GitPushDefault, NewWorkspace, OpenAbout,
+    OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenOperationLog, OpenRemoteRepository,
+    OpenRepoInEditor, OpenRepoInTerminal, OpenSettings, Refresh, SaveFileEditor, SaveNoteComposer,
     ShowRepoInFileManager,
 };
 use crate::app::theme::Theme;
@@ -31,6 +31,9 @@ impl RepoWindow {
                 CommandPalette::open(repo_path, Some(cx.entity()), cx);
             }))
             .on_action(cx.listener(|view, _: &OpenFind, _, cx| view.open_find(cx)))
+            .on_action(cx.listener(|view, _: &FocusSelectedChange, _, cx| {
+                view.focus_selected_change(cx);
+            }))
             .on_action(cx.listener(|view, _: &OpenBookmarkManager, _, cx| {
                 view.open_bookmark_manager(cx);
             }))

@@ -9,11 +9,11 @@ use std::time::Duration;
 use gpui::{Context, SharedString};
 use jayjay_core::{
     BookmarkInfo, ChangeInfo, CoreResult, DEFAULT_REVSET_DEPTH, DiffStats, FIRST_RESULT_BUDGET,
-    GraphLoadToken, LogGraphEvent, LogGraphRequest, LogGraphSnapshot, MAX_AUTO_LOADED_ROWS, Repo,
-    WorkspaceInfo, build_default_revset, default_revset_depth,
+    GraphEntry, GraphLoadToken, LogGraphEvent, LogGraphRequest, LogGraphSnapshot,
+    MAX_AUTO_LOADED_ROWS, Repo, WorkspaceInfo, build_default_revset, default_revset_depth,
 };
 
-use super::{PendingRefresh, RepoViewModel};
+use super::{PendingFocusTarget, PendingRefresh, RepoViewModel};
 use crate::repo::revset;
 
 /// Window during which FS echoes from our own mutations are ignored.
@@ -191,6 +191,34 @@ impl RepoViewModel {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        // A reload while focused (auto or manual) is not a revset replacement: it neither dims the graph
+        // nor scrolls, but the composed revset can emit descendants above the selected row, so hold the
+        // current selection across snapshots rather than letting the fallback snap to `@`. Focus/clear
+        // transitions set their own pinned target first; leave it untouched.
+        if self.focused_revision.is_some() && self.pending_focus_target.is_none() {
+            self.capture_graph_replacement_backup();
+            let held_row = selection.as_ref().and_then(|(_, commit_id)| {
+                self.graph
+                    .changes
+                    .iter()
+                    .find(|c| &c.commit_id.id == commit_id)
+            });
+            self.pending_focus_target = match held_row {
+                Some(change) => Some(PendingFocusTarget {
+                    revision: crate::repo::revset::change_revision(change).into(),
+                    commit_id: change.is_divergent.then(|| change.commit_id.id.clone()),
+                    reveals_on_appear: false,
+                }),
+                None => self
+                    .focused_revision
+                    .clone()
+                    .map(|revision| PendingFocusTarget {
+                        revision,
+                        commit_id: None,
+                        reveals_on_appear: false,
+                    }),
+            };
+        }
         self.loading.pending_auto_refresh = None;
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
         if !is_auto_triggered {
@@ -204,7 +232,7 @@ impl RepoViewModel {
         self.begin_refreshing(cx);
         self.loading.refresh_gen = self.loading.refresh_gen.wrapping_add(1);
         let generation = self.loading.refresh_gen;
-        let revset = self.revset.to_string();
+        let revset = self.effective_revset();
         let previous_selection = selection;
         let token = GraphLoadToken::new();
         self.loading.graph_session = Some(token.clone());
@@ -338,6 +366,7 @@ impl RepoViewModel {
             RefreshUpdate::Ancillary(Err(error)) => {
                 self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen == generation {
+                    self.restore_graph_replacement();
                     self.present_error(error);
                     cx.notify();
                 }
@@ -382,6 +411,13 @@ impl RepoViewModel {
                 if self.loading.refresh_gen != generation {
                     return;
                 }
+                // The core omits the terminal is_complete snapshot when every row was already streamed,
+                // so the focus-root recovery that apply_graph_snapshot runs on completion must also run
+                // here.
+                let entries = self.graph.entries.clone();
+                if self.recover_missing_focus_target(&entries, cx) {
+                    return;
+                }
                 if is_auto_triggered && self.refresh_suspended {
                     self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
                     return;
@@ -394,12 +430,14 @@ impl RepoViewModel {
                 // against fresh state. A user-initiated cancel leaves no pending refresh, so this is
                 // inert. While suspended, keep it owed for `set_refresh_suspended` to run later.
                 if self.loading.refresh_gen == generation {
+                    self.restore_graph_replacement();
                     self.resume_pending_refresh(cx);
                 }
             }
             RefreshUpdate::Graph(LogGraphEvent::Failed(error)) => {
                 self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen == generation {
+                    self.restore_graph_replacement();
                     self.present_error(error);
                     cx.notify();
                 }
@@ -432,17 +470,56 @@ impl RepoViewModel {
         previous_selection: &Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
+        // A focused refresh that completes without surfacing the focus root means the root left the
+        // graph. Snapshot entries are cumulative, so a complete snapshot missing the root is
+        // authoritative. The core omits this terminal snapshot when every row was already streamed, so
+        // the Finished handler repeats the check for that path.
+        if snapshot.is_complete && self.recover_missing_focus_target(&snapshot.entries, cx) {
+            return;
+        }
+        if snapshot.is_complete {
+            self.graph_replacement_backup = None;
+        }
+
+        self.graph_awaiting_replacement = false;
+
         let is_first = !self.loading.graph_first_snapshot_applied;
         self.loading.graph_first_snapshot_applied = true;
         self.loading.graph_load_slow = false;
 
         if snapshot.is_complete {
-            self.can_load_more = self
-                .revset_depth()
-                .is_some_and(|depth| snapshot.entries.len() >= depth as usize);
+            // Focus disables infinite-scroll paging: the composed revset is not a pageable default.
+            self.can_load_more = self.focused_revision.is_none()
+                && self
+                    .revset_depth()
+                    .is_some_and(|depth| snapshot.entries.len() >= depth as usize);
         }
         self.graph.dag_layout = Arc::new(snapshot.layout);
         let changes: Vec<ChangeInfo> = snapshot.entries.iter().map(|e| e.change.clone()).collect();
+
+        // A pinned focus target may surface in any snapshot, not just the first. Select and reveal it
+        // once it appears; until then hold selection rather than falling back to `@` or the first row.
+        if let Some(target) = &self.pending_focus_target {
+            let appeared = changes.iter().position(|c| target.matches(c));
+            let reveals_on_appear = target.reveals_on_appear;
+            self.graph.changes = Arc::new(changes);
+            self.graph.entries = Arc::new(snapshot.entries);
+            if let Some(ix) = appeared {
+                self.pending_focus_target = None;
+                if reveals_on_appear {
+                    let revision = crate::repo::revset::change_revision(&self.graph.changes[ix]);
+                    self.pending_focus_reveal = Some(revision.into());
+                }
+                self.select_change(ix, cx);
+            } else {
+                // Selection is index-based, so a snapshot without the target has no valid row to keep;
+                // clear until it appears. Matching by id then re-selects the correct row, not a stale index.
+                self.selected = None;
+                self.selected_changes.clear();
+                cx.notify();
+            }
+            return;
+        }
 
         if !is_first {
             self.graph.changes = Arc::new(changes);
@@ -518,10 +595,150 @@ impl RepoViewModel {
         } else {
             trimmed.to_owned().into()
         };
-        self.can_load_more = false;
-        // A new revset is a fresh query; drop any raised Continue Loading ceiling.
-        self.loading.graph_row_ceiling = 0;
+        // A new base filter shows in full: a stale focus would silently scope it to an unrelated change.
+        self.focused_revision = None;
+        self.focused_commit_id = None;
+        self.pending_focus_target = None;
+        self.mark_graph_awaiting_replacement();
+        self.reset_graph_paging();
         self.refresh(false, cx);
+    }
+
+    /// A fresh query disables paging and drops any raised Continue Loading ceiling.
+    fn reset_graph_paging(&mut self) {
+        self.can_load_more = false;
+        self.loading.graph_row_ceiling = 0;
+    }
+
+    /// Retain the current graph so a focused refresh that loses its target can restore it. Cheap: the
+    /// rows are behind `Arc`, so nothing is deep-copied.
+    fn capture_graph_replacement_backup(&mut self) {
+        if self.graph_replacement_backup.is_none() && !self.graph.entries.is_empty() {
+            self.graph_replacement_backup = Some(super::GraphReplacementBackup {
+                changes: self.graph.changes.clone(),
+                entries: self.graph.entries.clone(),
+                dag_layout: self.graph.dag_layout.clone(),
+                selected: self.selected,
+                selected_changes: self.selected_changes.clone(),
+            });
+        }
+    }
+
+    fn mark_graph_awaiting_replacement(&mut self) {
+        self.capture_graph_replacement_backup();
+        self.graph_awaiting_replacement = !self.graph.entries.is_empty();
+    }
+
+    fn restore_graph_replacement(&mut self) -> bool {
+        let Some(backup) = self.graph_replacement_backup.take() else {
+            return false;
+        };
+        self.graph.changes = backup.changes;
+        self.graph.entries = backup.entries;
+        self.graph.dag_layout = backup.dag_layout;
+        self.selected = backup.selected;
+        self.selected_changes = backup.selected_changes;
+        self.graph_awaiting_replacement = !self.graph.entries.is_empty();
+        true
+    }
+
+    /// Restore the prior graph and keep the focus pill when a focused refresh no longer contains its
+    /// focus root (a rewrite invalidated the pinned commit id), rather than presenting a target-less
+    /// graph as current. No-op when unfocused or the root is present. Returns whether recovery ran.
+    fn recover_missing_focus_target(
+        &mut self,
+        entries: &[GraphEntry],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(revision) = self.focused_revision.clone() else {
+            return false;
+        };
+        let root = PendingFocusTarget {
+            revision,
+            commit_id: self.focused_commit_id.clone(),
+            reveals_on_appear: false,
+        };
+        if entries.iter().any(|e| root.matches(&e.change)) {
+            return false;
+        }
+        self.pending_focus_target = None;
+        if !self.restore_graph_replacement() {
+            self.graph_awaiting_replacement = !self.graph.entries.is_empty();
+        }
+        self.present_error("Focused change is no longer in the graph.");
+        cx.notify();
+        true
+    }
+
+    /// The revset actually queried: the base scoped to the focus target's lineage, or the base itself.
+    pub(crate) fn effective_revset(&self) -> String {
+        match &self.focused_revision {
+            Some(target) => jayjay_core::focus_revset(self.revset.as_ref(), target.as_ref()),
+            None => self.revset.to_string(),
+        }
+    }
+
+    /// Scope the graph to `revision`'s connected lineage. Composition is always over the base `revset`,
+    /// not the current effective one, so focusing a second change replaces the first.
+    pub fn focus_on(&mut self, revision: SharedString, cx: &mut Context<Self>) {
+        if self.focused_revision.as_ref() == Some(&revision) {
+            return;
+        }
+        let target =
+            self.graph.changes.iter().find(|c| {
+                c.change_id.id == revision.as_ref() || c.commit_id.id == revision.as_ref()
+            });
+        let commit_id = target
+            .filter(|change| change.is_divergent)
+            .map(|change| change.commit_id.id.clone());
+        self.pending_focus_target = Some(PendingFocusTarget {
+            revision: revision.clone(),
+            commit_id: commit_id.clone(),
+            reveals_on_appear: true,
+        });
+        self.focused_revision = Some(revision);
+        self.focused_commit_id = commit_id;
+        self.mark_graph_awaiting_replacement();
+        self.reset_graph_paging();
+        self.refresh(false, cx);
+    }
+
+    /// Keyboard/menu path to focus the current selection. Reachable when no row is clipped, so focus
+    /// is not badge-only. No-op without a selection or when already focused on that revision.
+    pub fn focus_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(revision) = self
+            .selected
+            .and_then(|ix| self.graph.changes.get(ix))
+            .map(crate::repo::revset::change_revision)
+        else {
+            return;
+        };
+        self.focus_on(revision.into(), cx);
+    }
+
+    pub fn clear_focus(&mut self, cx: &mut Context<Self>) {
+        if self.focused_revision.is_none() {
+            return;
+        }
+        self.focused_revision = None;
+        self.focused_commit_id = None;
+        // Pin the current selection so it survives the full graph's progressive snapshots and scrolls back into view; without the pin the taller base graph keeps its offset and leaves the selected row below the fold, or a row streamed after the first prefix is never reselected.
+        self.pending_focus_target =
+            self.selected
+                .and_then(|ix| self.graph.changes.get(ix))
+                .map(|change| PendingFocusTarget {
+                    revision: crate::repo::revset::change_revision(change).into(),
+                    commit_id: change.is_divergent.then(|| change.commit_id.id.clone()),
+                    reveals_on_appear: true,
+                });
+        self.mark_graph_awaiting_replacement();
+        self.reset_graph_paging();
+        self.refresh(false, cx);
+    }
+
+    /// Consumed by the window after a focus target is selected, to scroll it into view once.
+    pub(crate) fn take_pending_focus_reveal(&mut self) -> Option<SharedString> {
+        self.pending_focus_reveal.take()
     }
 
     pub(crate) fn revset_depth(&self) -> Option<u32> {
@@ -589,4 +806,437 @@ fn refresh_ancillary_blocking(
         working_copy_stats,
         current_operation_description,
     })
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use std::sync::Arc;
+
+    use gpui::{AppContext, TestAppContext};
+    use jayjay_core::dag::DagLayout;
+    use jayjay_core::{
+        ChangeInfo, CommitAuthor, DEFAULT_REVSET_DEPTH, GraphEntry, LogGraphSnapshot,
+        NewChangeEligibility, ShortId, build_default_revset,
+    };
+
+    use super::super::{PendingFocusTarget, RepoViewModel};
+
+    fn change(change_id: &str, commit_id: &str) -> ChangeInfo {
+        ChangeInfo {
+            change_id: ShortId::new(change_id.to_string(), 1),
+            commit_id: ShortId::new(commit_id.to_string(), 1),
+            description: "entry".to_string(),
+            author: CommitAuthor::empty(0),
+            parents: Vec::new(),
+            bookmarks: Vec::new(),
+            tags: Vec::new(),
+            workspaces: Vec::new(),
+            is_working_copy: false,
+            has_conflict: false,
+            is_empty: false,
+            is_immutable: false,
+            is_divergent: false,
+            new_change: NewChangeEligibility {
+                on_top: true,
+                before: true,
+                after: true,
+            },
+        }
+    }
+
+    fn entry(change_id: &str, commit_id: &str) -> GraphEntry {
+        GraphEntry {
+            change: change(change_id, commit_id),
+            edges: Vec::new(),
+        }
+    }
+
+    fn snapshot(entries: Vec<GraphEntry>, is_complete: bool) -> LogGraphSnapshot {
+        let layout = DagLayout::compute(&entries, true);
+        let loaded_rows = entries.len() as u32;
+        LogGraphSnapshot {
+            entries,
+            layout,
+            loaded_rows,
+            is_complete,
+        }
+    }
+
+    #[gpui::test]
+    fn effective_revset_composes_focus_over_base(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, _| {
+            vm.revset = "all()".into();
+            assert_eq!(vm.effective_revset(), "all()");
+            vm.focused_revision = Some("abc".into());
+            assert_eq!(vm.effective_revset(), "(all()) & (::abc | abc::)");
+        });
+    }
+
+    #[gpui::test]
+    fn pinned_target_held_until_it_appears_then_selected_and_revealed_once(
+        cx: &mut TestAppContext,
+    ) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.focused_revision = Some("X".into());
+            vm.graph_awaiting_replacement = true;
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "X".into(),
+                commit_id: Some("xxx".into()),
+                reveals_on_appear: true,
+            });
+
+            // First snapshot lacks X: selection stays pending, no reveal.
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], false), &None, cx);
+            assert!(vm.pending_focus_target.is_some());
+            assert_eq!(vm.selected, None);
+            assert!(vm.pending_focus_reveal.is_none());
+
+            // X arrives: select and reveal it once.
+            vm.apply_graph_snapshot(
+                snapshot(vec![entry("D", "ddd"), entry("X", "xxx")], false),
+                &None,
+                cx,
+            );
+            assert!(vm.pending_focus_target.is_none());
+            assert_eq!(vm.selected, Some(1));
+            assert_eq!(vm.take_pending_focus_reveal().as_deref(), Some("X"));
+
+            // A later snapshot keeps X selected without another reveal.
+            vm.apply_graph_snapshot(
+                snapshot(
+                    vec![entry("D", "ddd"), entry("X", "xxx"), entry("E", "eee")],
+                    true,
+                ),
+                &None,
+                cx,
+            );
+            assert_eq!(vm.selected, Some(1));
+            assert!(vm.pending_focus_reveal.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn divergent_target_matches_only_its_commit_id(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.focused_revision = Some("bbb".into());
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "bbb".into(),
+                commit_id: Some("bbb".into()),
+                reveals_on_appear: true,
+            });
+            // Two divergent rows share the change id "shared"; only the bbb commit satisfies the pin.
+            vm.apply_graph_snapshot(
+                snapshot(vec![entry("shared", "aaa"), entry("shared", "bbb")], true),
+                &None,
+                cx,
+            );
+            assert_eq!(vm.selected, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    fn non_divergent_focus_accepts_rewritten_commit_for_same_change(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.revset = "all()".into();
+            vm.graph.changes = Arc::new(vec![change("X", "old")]);
+            vm.graph.entries = Arc::new(vec![entry("X", "old")]);
+
+            vm.focus_on("X".into(), cx);
+            vm.apply_graph_snapshot(snapshot(vec![entry("X", "new")], true), &None, cx);
+
+            assert_eq!(vm.graph.entries[0].change.commit_id.id, "new");
+            assert_eq!(vm.selected, Some(0));
+            assert!(vm.error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn focus_disables_paging_when_the_composed_result_completes(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.revset = build_default_revset(DEFAULT_REVSET_DEPTH).into();
+            vm.focused_revision = Some("c0".into());
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "c0".into(),
+                commit_id: Some("h0".into()),
+                reveals_on_appear: true,
+            });
+            let entries: Vec<GraphEntry> = (0..=DEFAULT_REVSET_DEPTH)
+                .map(|i| entry(&format!("c{i}"), &format!("h{i}")))
+                .collect();
+            vm.apply_graph_snapshot(snapshot(entries, true), &None, cx);
+            assert!(!vm.can_load_more);
+        });
+    }
+
+    #[gpui::test]
+    fn completed_focus_without_target_preserves_prior_graph_and_pill(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.revset = "all()".into();
+            let prior = vec![entry("A", "aaa"), entry("B", "bbb")];
+            vm.graph.entries = std::sync::Arc::new(prior.clone());
+            vm.graph.changes =
+                std::sync::Arc::new(prior.iter().map(|e| e.change.clone()).collect());
+            vm.focused_revision = Some("X".into());
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "X".into(),
+                commit_id: Some("xxx".into()),
+                reveals_on_appear: true,
+            });
+
+            // The focused revset completed but the pinned target never appeared (a rewrite dropped it).
+            vm.apply_graph_snapshot(snapshot(vec![entry("C", "ccc")], true), &None, cx);
+
+            let commit_ids: Vec<&str> = vm
+                .graph
+                .entries
+                .iter()
+                .map(|e| e.change.commit_id.id.as_str())
+                .collect();
+            assert_eq!(commit_ids, vec!["aaa", "bbb"]);
+            assert_eq!(vm.focused_revision.as_deref(), Some("X"));
+            assert!(vm.pending_focus_target.is_none());
+            assert!(vm.error.is_some());
+            assert!(vm.graph_awaiting_replacement);
+        });
+    }
+
+    #[gpui::test]
+    fn progressive_focus_without_target_restores_prior_graph(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.revset = "all()".into();
+            let prior = vec![entry("X", "xxx"), entry("A", "aaa")];
+            vm.graph.entries = Arc::new(prior.clone());
+            vm.graph.changes = Arc::new(prior.iter().map(|e| e.change.clone()).collect());
+
+            vm.focus_on("X".into(), cx);
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], false), &None, cx);
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], true), &None, cx);
+
+            let commit_ids: Vec<&str> = vm
+                .graph
+                .entries
+                .iter()
+                .map(|entry| entry.change.commit_id.id.as_str())
+                .collect();
+            assert_eq!(commit_ids, vec!["xxx", "aaa"]);
+            assert!(vm.graph_awaiting_replacement);
+            assert!(vm.error.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn failed_progressive_focus_restores_prior_graph(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            let prior = vec![entry("X", "xxx"), entry("A", "aaa")];
+            vm.graph.entries = Arc::new(prior.clone());
+            vm.graph.changes = Arc::new(prior.iter().map(|e| e.change.clone()).collect());
+            vm.focused_revision = Some("X".into());
+            vm.mark_graph_awaiting_replacement();
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "X".into(),
+                commit_id: None,
+                reveals_on_appear: true,
+            });
+
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], false), &None, cx);
+            let generation = vm.loading.refresh_gen;
+            vm.apply_refresh_update(
+                super::RefreshUpdate::Graph(jayjay_core::LogGraphEvent::Failed(
+                    jayjay_core::CoreError::Review {
+                        message: "stream failed".to_owned(),
+                    },
+                )),
+                false,
+                &None,
+                generation,
+                cx,
+            );
+
+            let commit_ids: Vec<&str> = vm
+                .graph
+                .entries
+                .iter()
+                .map(|entry| entry.change.commit_id.id.as_str())
+                .collect();
+            assert_eq!(commit_ids, vec!["xxx", "aaa"]);
+            assert!(vm.graph_awaiting_replacement);
+            assert!(
+                vm.error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("stream failed"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn streamed_focus_finishing_without_target_restores_prior_graph(cx: &mut TestAppContext) {
+        // The core omits the terminal is_complete snapshot when every row streamed already, so a
+        // target-less focused result completes via Finished alone. Recovery must still fire.
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            let prior = vec![entry("X", "xxx"), entry("A", "aaa")];
+            vm.graph.entries = Arc::new(prior.clone());
+            vm.graph.changes = Arc::new(prior.iter().map(|e| e.change.clone()).collect());
+            vm.focused_revision = Some("X".into());
+            vm.mark_graph_awaiting_replacement();
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "X".into(),
+                commit_id: None,
+                reveals_on_appear: true,
+            });
+
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], false), &None, cx);
+            let generation = vm.loading.refresh_gen;
+            vm.apply_refresh_update(
+                super::RefreshUpdate::Graph(jayjay_core::LogGraphEvent::Finished),
+                false,
+                &None,
+                generation,
+                cx,
+            );
+
+            let commit_ids: Vec<&str> = vm
+                .graph
+                .entries
+                .iter()
+                .map(|entry| entry.change.commit_id.id.as_str())
+                .collect();
+            assert_eq!(commit_ids, vec!["xxx", "aaa"]);
+            assert_eq!(vm.focused_revision.as_deref(), Some("X"));
+            assert!(vm.pending_focus_target.is_none());
+            assert!(vm.error.is_some());
+            assert!(vm.graph_awaiting_replacement);
+        });
+    }
+
+    #[gpui::test]
+    fn later_focused_refresh_without_target_preserves_prior_graph(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            let prior = vec![entry("X", "xxx")];
+            vm.graph.entries = Arc::new(prior.clone());
+            vm.graph.changes = Arc::new(prior.iter().map(|e| e.change.clone()).collect());
+            vm.focused_revision = Some("X".into());
+            vm.focused_commit_id = Some("xxx".into());
+            vm.pending_focus_target = None;
+
+            vm.apply_graph_snapshot(snapshot(Vec::new(), true), &None, cx);
+
+            let commit_ids: Vec<&str> = vm
+                .graph
+                .entries
+                .iter()
+                .map(|entry| entry.change.commit_id.id.as_str())
+                .collect();
+            assert_eq!(commit_ids, vec!["xxx"]);
+            assert!(vm.error.is_some());
+            assert!(vm.graph_awaiting_replacement);
+        });
+    }
+
+    #[gpui::test]
+    fn pending_focus_does_not_retarget_an_existing_selection_by_index(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.graph.changes = Arc::new(vec![change("A", "aaa"), change("X", "xxx")]);
+            vm.graph.entries = Arc::new(vec![entry("A", "aaa"), entry("X", "xxx")]);
+            vm.selected = Some(1);
+            vm.focused_revision = Some("X".into());
+            vm.focused_commit_id = Some("xxx".into());
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "X".into(),
+                commit_id: Some("xxx".into()),
+                reveals_on_appear: true,
+            });
+
+            vm.apply_graph_snapshot(snapshot(vec![entry("D", "ddd")], false), &None, cx);
+
+            assert_eq!(vm.selected, None);
+        });
+    }
+
+    #[gpui::test]
+    fn clearing_focus_pins_the_selection_and_reveals_it_once_it_reappears(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.revset = "all()".into();
+            // Focused on X; the user navigated to a descendant Y within the lineage.
+            let focused = vec![entry("X", "xxx"), entry("Y", "yyy")];
+            vm.graph.entries = Arc::new(focused.clone());
+            vm.graph.changes = Arc::new(focused.iter().map(|e| e.change.clone()).collect());
+            vm.focused_revision = Some("X".into());
+            vm.focused_commit_id = Some("xxx".into());
+            vm.selected = Some(1);
+
+            vm.clear_focus(cx);
+
+            assert!(vm.focused_revision.is_none());
+            assert_eq!(
+                vm.pending_focus_target,
+                Some(PendingFocusTarget {
+                    revision: "Y".into(),
+                    commit_id: None,
+                    reveals_on_appear: true,
+                })
+            );
+
+            // Y is absent from the full graph's first prefix: selection stays pending, no reveal.
+            vm.apply_graph_snapshot(
+                snapshot(vec![entry("W", "www"), entry("A", "aaa")], false),
+                &None,
+                cx,
+            );
+            assert_eq!(vm.selected, None);
+            assert!(vm.pending_focus_reveal.is_none());
+
+            // Y streams in later: select and reveal it once.
+            vm.apply_graph_snapshot(
+                snapshot(
+                    vec![entry("W", "www"), entry("A", "aaa"), entry("Y", "yyy")],
+                    true,
+                ),
+                &None,
+                cx,
+            );
+            assert!(vm.pending_focus_target.is_none());
+            assert_eq!(vm.selected, Some(2));
+            assert_eq!(vm.take_pending_focus_reveal().as_deref(), Some("Y"));
+        });
+    }
+
+    #[gpui::test]
+    fn reload_hold_reselects_the_target_without_revealing_it(cx: &mut TestAppContext) {
+        let vm = cx.new(|_| RepoViewModel::empty("/tmp".into()));
+        vm.update(cx, |vm, cx| {
+            vm.focused_revision = Some("X".into());
+            // A plain reload holds the current selection (Y), not the focus root, and must not scroll.
+            vm.pending_focus_target = Some(PendingFocusTarget {
+                revision: "Y".into(),
+                commit_id: None,
+                reveals_on_appear: false,
+            });
+
+            // The focus root X is always present under focus; the held selection Y sits among its lineage.
+            vm.apply_graph_snapshot(
+                snapshot(
+                    vec![entry("D", "ddd"), entry("Y", "yyy"), entry("X", "xxx")],
+                    true,
+                ),
+                &None,
+                cx,
+            );
+
+            assert_eq!(vm.selected, Some(1));
+            assert!(vm.pending_focus_target.is_none());
+            assert!(vm.pending_focus_reveal.is_none());
+        });
+    }
 }

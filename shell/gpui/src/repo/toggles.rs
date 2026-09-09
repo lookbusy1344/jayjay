@@ -34,7 +34,7 @@ impl RepoViewModel {
     }
 
     pub fn load_more(&mut self, cx: &mut Context<Self>) {
-        if !self.can_load_more {
+        if !self.can_load_more || self.focused_revision.is_some() {
             return;
         }
         let depth = self.revset_depth().unwrap_or(DEFAULT_REVSET_DEPTH);

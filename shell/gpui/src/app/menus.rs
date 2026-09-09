@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Menu, MenuItem, PathPromptOptions};
 
 use super::actions::{
-    ClearRecentRepositories, NewWorkspace, OpenAbout, OpenBookmarkManager, OpenCommandPalette,
-    OpenFind, OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOperationLog,
-    OpenRecentRepository, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal,
-    OpenRepository, OpenSettings, OpenUserGuide, Quit, ReportIssue, ResetZoom, SendFeedback,
-    ShowRepoInFileManager, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace, ToggleSideBySideDiff,
-    ToggleTreeFileList, ZoomIn, ZoomOut,
+    ClearRecentRepositories, FocusSelectedChange, NewWorkspace, OpenAbout, OpenBookmarkManager,
+    OpenCommandPalette, OpenFind, OpenJujutsuDocumentation, OpenKeyboardShortcuts,
+    OpenOperationLog, OpenRecentRepository, OpenRemoteRepository, OpenRepoInEditor,
+    OpenRepoInTerminal, OpenRepository, OpenSettings, OpenUserGuide, Quit, ReportIssue, ResetZoom,
+    SendFeedback, ShowRepoInFileManager, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace,
+    ToggleSideBySideDiff, ToggleTreeFileList, ZoomIn, ZoomOut,
 };
 use super::config::{self, AppConfig, current};
 use super::tools;
@@ -45,6 +45,7 @@ fn app_menus(cx: &mut App) -> Vec<Menu> {
             MenuItem::action("Command Palette", OpenCommandPalette),
             MenuItem::action("Undo Last Operation", OpenOperationLog),
             MenuItem::separator(),
+            MenuItem::action("Focus on Selected Change", FocusSelectedChange),
             MenuItem::action("Bookmark Manager", OpenBookmarkManager),
             MenuItem::action("New Workspace...", NewWorkspace),
             MenuItem::separator(),
