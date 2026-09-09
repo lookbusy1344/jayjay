@@ -18,10 +18,11 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     @ObservationIgnored var onAction: ((MenuAction) -> Void)?
     @ObservationIgnored weak var viewModel: RepoViewModel?
+    var canFocusSelectedChange = false
 
     enum MenuAction {
         case shortcut(AppShortcut)
-        case commandPalette, operationLog, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport
+        case commandPalette, operationLog, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange
     }
 
     func showCommandPalette() {
@@ -64,5 +65,9 @@ final class RepoMenuHandler: RepositoryMenuHandler {
     func redoOperation() {
         guard let steps = operationSteps, steps.redoDescription != nil else { return }
         viewModel?.redo(operationId: steps.operationId)
+    }
+
+    func focusSelectedChange() {
+        onAction?(.focusSelectedChange)
     }
 }
