@@ -78,7 +78,7 @@ pub use revset::{
     RevsetCompletionKind, RevsetFilter, RevsetFilterKind, RevsetFilterState, RevsetName,
     RevsetPreset, RevsetSuggestion, RevsetSuggestionKind, RevsetVocabulary, ancestors_revset,
     bookmark_filter_revset, build_default_revset, default_revset_depth, default_revset_preset,
-    revset_completions, revset_presets, typed_revset,
+    focus_revset, revset_completions, revset_presets, typed_revset,
 };
 pub use theme::{DiffThemeColors, ThemeSeed, change_id_prefix_color, diff_theme_colors};
 #[cfg(feature = "repository")]

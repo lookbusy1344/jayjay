@@ -12,6 +12,11 @@ pub fn ancestors_revset(change_id: &str) -> String {
     format!("::change_id({change_id})")
 }
 
+/// Scope `base` to the connected lineage of `target` (ancestors and descendants, inclusive), so a focused graph drops lanes unrelated to `target` while staying a subset of `base`. The result is a plain revset string parsed by the normal path.
+pub fn focus_revset(base: &str, target: &str) -> String {
+    format!("({base}) & (::{target} | {target}::)")
+}
+
 /// The name as a revset symbol: bare while jj reads it as one, quoted and escaped otherwise.
 pub(super) fn symbol_text(name: &str) -> String {
     match parse_symbol(name) {
@@ -115,5 +120,14 @@ mod tests {
         for other in ["\"a\" | trunk()..\"a\"", "a | trunk()..a", "::main"] {
             assert_eq!(bookmark_filter_name(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn focus_revset_scopes_the_base_to_the_targets_lineage() {
+        assert_eq!(focus_revset("all()", "abc"), "(all()) & (::abc | abc::)");
+        assert_eq!(
+            focus_revset("trunk() | mine()", "xyz"),
+            "(trunk() | mine()) & (::xyz | xyz::)"
+        );
     }
 }

@@ -27,7 +27,7 @@ struct RepoContentView: View {
     @Environment(\.openSettings) var openSettings
     @Environment(\.colorScheme) var colorScheme
 
-    var body: some View {
+    private var observedContent: some View {
         contentLayout
             .frame(minWidth: 800, minHeight: 500)
             .environment(diffCommands)
@@ -42,11 +42,13 @@ struct RepoContentView: View {
                         case .overview: windowManager.openOverview(for: viewModel.repoPath)
                         case .newWorkspace: modal = .workspaceCreate
                         case .pullRequestImport: modal = .pullRequestImport
+                        case .focusSelectedChange: viewModel.focusSelectedChange()
                     }
                 }
                 ActiveRepoTracker.shared.register(
                     repoPath: viewModel.repoPath, settings: settings, handler: menuCoordinator
                 )
+                updateFocusMenuEligibility()
                 // Defeat AppKit auto-focus on CommitBox so j/k nav works on cold launch.
                 if !hasResetInitialFocus {
                     hasResetInitialFocus = true
@@ -66,6 +68,12 @@ struct RepoContentView: View {
             .onChange(of: settings.sidebarHidden, initial: true) { _, hidden in
                 handleSidebarVisibilityChange(hidden: hidden)
             }
+            .onChange(of: viewModel.selectedChangeId) { updateFocusMenuEligibility() }
+            .onChange(of: viewModel.focusedRevision) { updateFocusMenuEligibility() }
+            .onChange(of: viewModel.pendingDagReveal) { _, request in
+                guard let request else { return }
+                viewModel.dagRevealRequest = request
+            }
             .onChange(of: viewModel.workspaceVanished) { _, vanished in
                 guard vanished else { return }
                 let repoPath = viewModel.repoPath
@@ -73,6 +81,10 @@ struct RepoContentView: View {
                     await windowManager.withWorkspaceRemoval(at: repoPath) {}
                 }
             }
+    }
+
+    var body: some View {
+        observedContent
             .toolbar { toolbarContent }
             .environment(keyboardFocus)
             .background(
@@ -166,5 +178,15 @@ struct RepoContentView: View {
     /// Alerts deliberately don't suspend: pausing on an error would make dismissal re-run the failing refresh.
     private var backgroundRefreshSuspended: Bool {
         modal != nil || detailInteractionActive
+    }
+
+    private func updateFocusMenuEligibility() {
+        let canFocus = viewModel.selectedChangeId != nil
+            && viewModel.selectedChangeId != viewModel.focusedRevision
+        menuCoordinator.canFocusSelectedChange = canFocus
+        ActiveRepoTracker.shared.updateFocusEligibility(
+            repoPath: viewModel.repoPath,
+            canFocus: canFocus
+        )
     }
 }
