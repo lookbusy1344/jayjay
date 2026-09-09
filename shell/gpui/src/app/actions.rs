@@ -24,6 +24,7 @@ actions!(
         RevealLogs,
         OpenBookmarkManager,
         OpenOverview,
+        FocusSelectedChange,
         OpenOperationLog,
         UndoOperation,
         RedoOperation,
@@ -102,6 +103,15 @@ pub fn app_key_bindings(
         }
     }
     bindings.push(gpui::KeyBinding::new("escape", Dismiss, None));
+    bindings.push(gpui::KeyBinding::new(
+        if crate::platform::MOD_KEY == "cmd" {
+            "cmd-shift-l"
+        } else {
+            "ctrl-shift-l"
+        },
+        FocusSelectedChange,
+        None,
+    ));
     bindings.push(gpui::KeyBinding::new(
         "enter",
         SubmitStackedPr,
