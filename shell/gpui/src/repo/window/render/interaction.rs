@@ -44,6 +44,9 @@ impl RepoWindow {
             self.select_change(selected, cx);
         } else if self.shows_file_alone(cx) {
             self.show_all_file_diffs(cx);
+        } else if self.vm.read(cx).focused_revision.is_some() {
+            // Lowest-priority Escape: after any overlay and a multi-selection collapse, clear focus.
+            self.clear_focus(cx);
         } else {
             return false;
         }

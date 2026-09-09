@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{App, Menu, MenuItem, PathPromptOptions};
 
 use super::actions::{
-    ClearRecentRepositories, CloneRepository, FilterByRevset, NewWorkspace,
+    ClearRecentRepositories, CloneRepository, FilterByRevset, FocusSelectedChange, NewWorkspace,
     NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette, OpenFind,
     OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOverview, OpenRecentRepository,
     OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal, OpenRepository, OpenSettings,
@@ -87,6 +87,10 @@ fn app_menus(cx: &mut App) -> Vec<Menu> {
                 FilterByRevset,
             ),
             MenuItem::action(jayjay_i18n::menu::review_mode(), ToggleReviewMode),
+            MenuItem::action(
+                jayjay_i18n::menu::hide_unrelated_changes(),
+                FocusSelectedChange,
+            ),
             MenuItem::action(jayjay_i18n::menu::bookmark_manager(), OpenBookmarkManager),
             MenuItem::action(jayjay_i18n::menu::repo_overview(), OpenOverview),
             MenuItem::action(jayjay_i18n::menu::new_workspace_ellipsis(), NewWorkspace),
