@@ -5,6 +5,7 @@ import XCTest
 @MainActor
 final class ActiveRepoTrackerTests: XCTestCase {
     private final class Handler: RepositoryMenuHandler {
+        var canFocusSelectedChange = false
         func showCommandPalette() {}
         func showUndo() {}
         func showRevsetFilter() {}
@@ -12,6 +13,7 @@ final class ActiveRepoTrackerTests: XCTestCase {
         func showOverview() {}
         func showNewWorkspace() {}
         func showPullRequestImport() {}
+        func focusSelectedChange() {}
     }
 
     func testRepositoryListWindowClearsTheActiveRepository() throws {
@@ -20,8 +22,10 @@ final class ActiveRepoTrackerTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let handler = Handler()
+        handler.canFocusSelectedChange = true
         let tracker = ActiveRepoTracker.shared
         tracker.register(repoPath: "/tmp/repo", settings: AppSettings(defaults: defaults), handler: handler)
+        XCTAssertTrue(tracker.canFocusSelectedChange)
 
         let repoList = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         repoList.isReleasedWhenClosed = false
@@ -29,6 +33,7 @@ final class ActiveRepoTrackerTests: XCTestCase {
         NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: repoList)
         XCTAssertNil(tracker.repoPath, "the repository list has no repository for the Repository menu to act on")
         XCTAssertNil(tracker.handler)
+        XCTAssertFalse(tracker.canFocusSelectedChange)
 
         let repoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         repoWindow.isReleasedWhenClosed = false

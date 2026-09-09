@@ -19,17 +19,11 @@ struct DAGView: View {
     var remoteTagNames: Set<String> = []
     var workspacesByName: [String: WorkspaceInfo] = [:]
     var refreshMode: RefreshMode = .refresh
-    var onOpenWorkspace: ((WorkspaceInfo) -> Void)?
-    var onAbandon: ((String) -> Void)?
-    var onAbandonSelection: (([String]) -> Void)?
-    var onSquashSelection: (([String]) -> Void)?
-    var onCreateBookmark: ((String) -> Void)?
-    var onCreateStackedPRs: ((String) -> Void)?
-    var onShowAncestors: ((String) -> Void)?
-    var onLoadMore: (() -> Void)?
     var loadMoreLabel = Localized.Repo.loadMoreTitle
     var bisect: BisectState?
     var selectionGraph: DagSelectionGraph?
+    var isFocused = false
+    var isInteractionEnabled = true
 
     @State private var sidebarWidth: CGFloat = 0
     @State var rebaseRowFrames: [String: CGRect] = [:]
@@ -64,17 +58,11 @@ struct DAGView: View {
         remoteTagNames: Set<String> = [],
         workspacesByName: [String: WorkspaceInfo] = [:],
         refreshMode: RefreshMode = .refresh,
-        onOpenWorkspace: ((WorkspaceInfo) -> Void)? = nil,
-        onAbandon: ((String) -> Void)? = nil,
-        onAbandonSelection: (([String]) -> Void)? = nil,
-        onSquashSelection: (([String]) -> Void)? = nil,
-        onCreateBookmark: ((String) -> Void)? = nil,
-        onCreateStackedPRs: ((String) -> Void)? = nil,
-        onShowAncestors: ((String) -> Void)? = nil,
-        onLoadMore: (() -> Void)? = nil,
         loadMoreLabel: String = Localized.Repo.loadMoreTitle,
         bisect: BisectState? = nil,
-        selectionGraph: DagSelectionGraph? = nil
+        selectionGraph: DagSelectionGraph? = nil,
+        isFocused: Bool = false,
+        isInteractionEnabled: Bool = true
     ) {
         self.entries = entries
         self.layout = layout
@@ -92,17 +80,11 @@ struct DAGView: View {
         self.remoteTagNames = remoteTagNames
         self.workspacesByName = workspacesByName
         self.refreshMode = refreshMode
-        self.onOpenWorkspace = onOpenWorkspace
-        self.onAbandon = onAbandon
-        self.onAbandonSelection = onAbandonSelection
-        self.onSquashSelection = onSquashSelection
-        self.onCreateBookmark = onCreateBookmark
-        self.onCreateStackedPRs = onCreateStackedPRs
-        self.onShowAncestors = onShowAncestors
-        self.onLoadMore = onLoadMore
         self.loadMoreLabel = loadMoreLabel
         self.bisect = bisect
         self.selectionGraph = selectionGraph
+        self.isFocused = isFocused
+        self.isInteractionEnabled = isInteractionEnabled
     }
 
     var body: some View {
@@ -159,16 +141,11 @@ struct DAGView: View {
                                     },
                                     onBookmarkDragEnded: { name, value in
                                         handleBookmarkDragEnded(name: name, value: value)
-                                    }
+                                    },
+                                    onFocus: { actions?.focus(on: entry.change.selectionRevision) }
                                 )
                                 .background(rebaseFrameReader(for: entry.change.commitId.id))
                                 .id(rowId)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityIdentifier(AID.DAG.row(String(rowId.prefix(12))))
-                                .accessibilityValue(rowViewModel.accessibilitySummary)
-                                .accessibilityAddTraits(
-                                    rowViewModel.isSelectionHighlighted ? .isSelected : []
-                                )
                                 .contentShape(Rectangle())
                                 .selectionContextMenu(for: rowId, request: $contextMenuRequest) {
                                     rowContextMenu(entry: entry, viewModel: viewModel)
@@ -282,7 +259,14 @@ struct DAGView: View {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        handleBookmarkKeyDown(event) || handleRebaseKeyDown(event) || handleContextMenuKeyDown(event)
+        guard isInteractionEnabled else {
+            if event.keyCode == KeyCode.escape, isFocused {
+                actions?.clearFocus()
+                return true
+            }
+            return false
+        }
+        return handleBookmarkKeyDown(event) || handleRebaseKeyDown(event) || handleContextMenuKeyDown(event)
             || handleSelectionKeyDown(event)
     }
 
@@ -366,6 +350,11 @@ struct DAGView: View {
                 return true
             default:
                 break
+        }
+        // Lowest-priority Escape: after any active drag and a multi-selection collapse, clear focus.
+        if event.keyCode == KeyCode.escape, isFocused {
+            actions?.clearFocus()
+            return true
         }
         let isCtrl = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control
         guard let delta = DAGViewModel.selectionDelta(
