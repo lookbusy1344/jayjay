@@ -159,6 +159,12 @@ impl RepoViewModel {
             ignore_whitespace: false,
             can_load_more: default_revset_depth(&revset_filter.revset)
                 .is_some_and(|depth| changes.len() >= depth as usize),
+            focused_revision: None,
+            focused_commit_id: None,
+            pending_focus_target: None,
+            pending_focus_reveal: None,
+            graph_awaiting_replacement: false,
+            graph_replacement_backup: None,
             revset_filter,
             vocabulary,
             detail_mode: DetailMode::Diff,
@@ -184,7 +190,7 @@ impl RepoViewModel {
         }
     }
 
-    fn empty(repo_path: SharedString) -> Self {
+    pub(super) fn empty(repo_path: SharedString) -> Self {
         Self {
             repo: None,
             fix_unavailable_reason: None,
@@ -205,6 +211,12 @@ impl RepoViewModel {
             ignore_whitespace: false,
             revset_filter: RevsetFilterState::new(&build_default_revset(DEFAULT_REVSET_DEPTH)),
             can_load_more: false,
+            focused_revision: None,
+            focused_commit_id: None,
+            pending_focus_target: None,
+            pending_focus_reveal: None,
+            graph_awaiting_replacement: false,
+            graph_replacement_backup: None,
             vocabulary: RevsetVocabulary::default(),
             detail_mode: DetailMode::Diff,
             annotate_lines: None,

@@ -9,7 +9,7 @@ use jayjay_core::{
     WorkspaceInfo,
 };
 
-use super::super::{PendingRefresh, RepoViewModel};
+use super::super::{PendingFocusTarget, PendingRefresh, RepoViewModel};
 
 const MUTATION_ECHO_WINDOW: Duration = Duration::from_secs(5);
 
@@ -101,6 +101,31 @@ impl RepoViewModel {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        // A reload while focused (auto or manual) is not a revset replacement: it neither dims the graph nor scrolls, but the composed revset can emit descendants above the selected row, so hold the current selection across snapshots rather than letting the fallback snap to `@`. Focus/clear transitions set their own pinned target first; leave it untouched.
+        if self.focused_revision.is_some() && self.pending_focus_target.is_none() {
+            self.capture_graph_replacement_backup();
+            let held_row = selection.as_ref().and_then(|(_, commit_id)| {
+                self.graph
+                    .changes
+                    .iter()
+                    .find(|c| &c.commit_id.id == commit_id)
+            });
+            self.pending_focus_target = match held_row {
+                Some(change) => Some(PendingFocusTarget {
+                    revision: change.selection_revision().into(),
+                    commit_id: change.is_divergent.then(|| change.commit_id.id.clone()),
+                    reveals_on_appear: false,
+                }),
+                None => self
+                    .focused_revision
+                    .clone()
+                    .map(|revision| PendingFocusTarget {
+                        revision,
+                        commit_id: None,
+                        reveals_on_appear: false,
+                    }),
+            };
+        }
         self.loading.pending_auto_refresh = None;
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
         if !is_auto_triggered {
@@ -113,7 +138,7 @@ impl RepoViewModel {
         self.begin_refreshing(cx);
         self.loading.refresh_gen = self.loading.refresh_gen.wrapping_add(1);
         let generation = self.loading.refresh_gen;
-        let revset = self.revset().to_owned();
+        let revset = self.effective_revset();
         let previous_selection = selection;
         let token = GraphLoadToken::new();
         self.loading.graph_session = Some(token.clone());
@@ -246,6 +271,7 @@ impl RepoViewModel {
                 self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen == generation {
                     self.pending_error = None;
+                    self.restore_graph_replacement();
                     self.present_error(error);
                     cx.notify();
                 }
@@ -290,6 +316,11 @@ impl RepoViewModel {
                 if self.loading.refresh_gen != generation {
                     return;
                 }
+                // The core omits the terminal is_complete snapshot when every row was already streamed, so the focus-root recovery that apply_graph_snapshot runs on completion must also run here.
+                let entries = self.graph.entries.clone();
+                if self.recover_missing_focus_target(&entries, cx) {
+                    return;
+                }
                 if is_auto_triggered && self.refresh_suspended {
                     self.loading.pending_auto_refresh = Some(PendingRefresh::Reload);
                     return;
@@ -300,6 +331,7 @@ impl RepoViewModel {
                 self.finish_graph_session(generation, cx);
                 // A stale-session cancel from an FS event leaves a deferred refresh owed; run it now against fresh state. A user-initiated cancel leaves no pending refresh, so this is inert. While suspended, keep it owed for `set_refresh_suspended` to run later.
                 if self.loading.refresh_gen == generation {
+                    self.restore_graph_replacement();
                     self.resume_pending_refresh(cx);
                 }
             }
@@ -307,6 +339,7 @@ impl RepoViewModel {
                 self.finish_graph_session(generation, cx);
                 if self.loading.refresh_gen == generation {
                     self.pending_error = None;
+                    self.restore_graph_replacement();
                     self.present_error(error);
                     cx.notify();
                 }
@@ -329,23 +362,57 @@ impl RepoViewModel {
     }
 
     /// Applies one published graph prefix. The first snapshot of a session restores selection from `previous_selection`; later snapshots only append rows, since a session's prefixes share a stable ordering and never renumber an already-published row.
-    fn apply_graph_snapshot(
+    pub(super) fn apply_graph_snapshot(
         &mut self,
         snapshot: LogGraphSnapshot,
         previous_selection: &Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
+        // A focused refresh that completes without surfacing the focus root means the root left the graph. Snapshot entries are cumulative, so a complete snapshot missing the root is authoritative. The core omits this terminal snapshot when every row was already streamed, so the Finished handler repeats the check for that path.
+        if snapshot.is_complete && self.recover_missing_focus_target(&snapshot.entries, cx) {
+            return;
+        }
+        if snapshot.is_complete {
+            self.graph_replacement_backup = None;
+        }
+
+        self.graph_awaiting_replacement = false;
+
         let is_first = !self.loading.graph_first_snapshot_applied;
         self.loading.graph_first_snapshot_applied = true;
         self.loading.graph_load_slow = false;
 
         if snapshot.is_complete {
-            self.can_load_more = self
-                .revset_depth()
-                .is_some_and(|depth| snapshot.entries.len() >= depth as usize);
+            // Focus disables infinite-scroll paging: the composed revset is not a pageable default.
+            self.can_load_more = self.focused_revision.is_none()
+                && self
+                    .revset_depth()
+                    .is_some_and(|depth| snapshot.entries.len() >= depth as usize);
         }
         self.graph.dag_layout = Arc::new(snapshot.layout);
         let changes: Vec<ChangeInfo> = snapshot.entries.iter().map(|e| e.change.clone()).collect();
+
+        // A pinned focus target may surface in any snapshot, not just the first. Select and reveal it once it appears; until then hold selection rather than falling back to `@` or the first row.
+        if let Some(target) = &self.pending_focus_target {
+            let appeared = changes.iter().position(|c| target.matches(c));
+            let reveals_on_appear = target.reveals_on_appear;
+            self.graph.changes = Arc::new(changes);
+            self.graph.entries = Arc::new(snapshot.entries);
+            if let Some(ix) = appeared {
+                self.pending_focus_target = None;
+                if reveals_on_appear {
+                    let revision = self.graph.changes[ix].selection_revision().to_owned();
+                    self.pending_focus_reveal = Some(revision.into());
+                }
+                self.select_change(ix, cx);
+            } else {
+                // Selection is index-based, so a snapshot without the target has no valid row to keep; clear until it appears. Matching by id then re-selects the correct row, not a stale index.
+                self.selected = None;
+                self.selected_changes.clear();
+                cx.notify();
+            }
+            return;
+        }
 
         if !is_first {
             self.graph.changes = Arc::new(changes);

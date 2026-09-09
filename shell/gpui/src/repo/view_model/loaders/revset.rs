@@ -39,8 +39,7 @@ impl RepoViewModel {
     }
 
     fn reload_revset(&mut self, selecting: Option<String>, cx: &mut Context<Self>) {
-        self.can_load_more = false;
-        self.loading.graph_row_ceiling = 0;
+        self.clear_focus_for_new_filter();
         match selecting {
             Some(commit_id) => {
                 self.refresh_preferring(false, true, Some((commit_id.clone(), commit_id)), cx);

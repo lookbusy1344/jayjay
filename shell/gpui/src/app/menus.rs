@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Menu, MenuItem, PathPromptOptions};
 
 use super::actions::{
-    ClearRecentRepositories, FilterByRevset, NewWorkspace, NewWorkspaceFromPullRequest, OpenAbout,
-    OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenJujutsuDocumentation,
-    OpenKeyboardShortcuts, OpenOperationLog, OpenOverview, OpenRecentRepository,
-    OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal, OpenRepository, OpenSettings,
-    OpenUserGuide, Quit, ReportIssue, ResetZoom, SendFeedback, ShowRepoInFileManager,
-    ToggleHideGitLfsFiles, ToggleIgnoreWhitespace, ToggleSideBySideDiff, ToggleSidebar,
-    ToggleTreeFileList, ZoomIn, ZoomOut,
+    ClearRecentRepositories, FilterByRevset, FocusSelectedChange, NewWorkspace,
+    NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette, OpenFind,
+    OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOperationLog, OpenOverview,
+    OpenRecentRepository, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal,
+    OpenRepository, OpenSettings, OpenUserGuide, Quit, ReportIssue, ResetZoom, SendFeedback,
+    ShowRepoInFileManager, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace, ToggleSideBySideDiff,
+    ToggleSidebar, ToggleTreeFileList, ZoomIn, ZoomOut,
 };
 use super::config::{self, AppConfig, current};
 use super::tools;
@@ -56,6 +56,7 @@ fn app_menus(cx: &mut App) -> Vec<Menu> {
             MenuItem::action("Undo Last Operation", OpenOperationLog),
             MenuItem::separator(),
             MenuItem::action("Filter by Revset...", FilterByRevset),
+            MenuItem::action("Focus on Selected Change", FocusSelectedChange),
             MenuItem::action("Bookmark Manager", OpenBookmarkManager),
             MenuItem::action("Repo Overview", OpenOverview),
             MenuItem::action("New Workspace...", NewWorkspace),

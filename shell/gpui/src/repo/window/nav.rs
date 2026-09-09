@@ -3,6 +3,10 @@ use gpui::{Context, ScrollStrategy};
 use super::{ActivePane, RepoWindow};
 use crate::ui::navigation::{self, ListNav, ListNavKeys};
 
+fn sidebar_navigation_blocked(active_pane: ActivePane, graph_awaiting_replacement: bool) -> bool {
+    matches!(active_pane, ActivePane::Sidebar) && graph_awaiting_replacement
+}
+
 impl RepoWindow {
     pub(super) fn handle_nav_key(
         &mut self,
@@ -11,6 +15,13 @@ impl RepoWindow {
     ) -> bool {
         if self.find.query.is_some() || self.focused_control.is_some() {
             return false;
+        }
+        if sidebar_navigation_blocked(
+            self.active_pane,
+            self.vm.read(cx).graph_awaiting_replacement,
+        ) && navigation::list_nav_from_key(ev, ListNavKeys::CONTENT_LIST).is_some()
+        {
+            return true;
         }
         if self.diff_edit_active() && self.handle_diff_edit_nav_key(ev, cx) {
             return true;
@@ -158,6 +169,13 @@ mod tests {
             file("b.rs", 1),
             file("z.txt", 2),
         ]
+    }
+
+    #[test]
+    fn stale_graph_blocks_only_sidebar_navigation() {
+        assert!(sidebar_navigation_blocked(ActivePane::Sidebar, true));
+        assert!(!sidebar_navigation_blocked(ActivePane::Sidebar, false));
+        assert!(!sidebar_navigation_blocked(ActivePane::FileColumn, true));
     }
 
     #[test]
