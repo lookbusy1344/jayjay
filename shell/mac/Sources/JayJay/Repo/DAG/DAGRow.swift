@@ -13,6 +13,11 @@ struct DAGRow: View {
     var onBookmarkDragChanged: ((String, String, DragGesture.Value) -> Void)?
     var onBookmarkDragEnded: ((String, DragGesture.Value) -> Void)?
     @State private var isContextTarget = false
+    var onFocus: (() -> Void)?
+
+    /// Hover state for the overflow badge's focus button. Local to the row: unlike a rebase target it
+    /// does not coordinate across rows, so it stays out of `DAGViewModel`.
+    @State var badgeHovered = false
 
     /// Non-private: read by the DAGRow+GraphColumn / +Refs extensions.
     var change: ChangeInfo {
@@ -32,6 +37,11 @@ struct DAGRow: View {
         }
         .contentShape(Rectangle())
         .onHover { isContextTarget = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AID.DAG.row(String(change.selectionRevision.prefix(12))))
+        .accessibilityValue(viewModel.accessibilitySummary)
+        .accessibilityAddTraits(viewModel.isSelectionHighlighted ? .isSelected : [])
+        .overlay(alignment: .topLeading) { focusHitTarget }
     }
 
     /// The band labels sit in their own unpadded strip so they line up with the bands the graph

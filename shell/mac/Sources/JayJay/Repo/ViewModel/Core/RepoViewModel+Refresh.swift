@@ -54,35 +54,6 @@ extension RepoViewModel {
         resumePendingBackgroundRefresh()
     }
 
-    func fetchPrInfo(bookmarks: [String]) {
-        clearPrInfo()
-        guard !isShuttingDown, let bookmark = bookmarks.first else { return }
-        prFetchTask = startRepoTask { [weak self, repo] in
-            let info = repo.pullRequestInfo(bookmark: bookmark)
-            guard !Task.isCancelled else { return }
-            await self?.applyPrInfo(info)
-        }
-    }
-
-    func clearPrInfo() {
-        prFetchTask?.cancel()
-        prFetchTask = nil
-        prInfo = nil
-    }
-
-    @MainActor
-    private func applyPrInfo(_ info: PrInfo?) {
-        guard !isShuttingDown else { return }
-        prInfo = info
-    }
-
-    func applyRevset(_ newRevset: String, selecting revision: String = "@") {
-        revset = newRevset
-        graphRowCeiling = 0
-        graphPaused = false
-        refresh(selecting: revision)
-    }
-
     func refresh(
         selecting preferredRev: String? = nil,
         isAutoTriggered: Bool = false,
@@ -95,19 +66,16 @@ extension RepoViewModel {
             cancelGraphLoad()
             return
         }
-        refreshTask?.cancel()
-        graphLoadToken?.cancel()
-        graphLoadSlowTask?.cancel()
-        graphRefreshGeneration &+= 1
-        let generation = graphRefreshGeneration
-        isRefreshingInFlight = true
-        isLoading = graphEntries.isEmpty
-        graphLoadCanceling = false
-        graphLoadSlow = false
-        graphPaused = false
-        graphFirstSnapshotApplied = false
-        graphPendingSelectedChange = nil
-        canLoadMore = false
+        // A reload while focused (auto or manual) is not a revset replacement: it neither dims the graph
+        // nor scrolls, but the composed revset can emit descendants above the selected row, so hold the
+        // current selection across snapshots rather than letting the fallback snap to `@`. Focus/clear
+        // transitions set their own pinned target first; leave it untouched.
+        if focusedRevision != nil, pendingFocusTarget == nil {
+            captureGraphReplacementBackup()
+            pendingFocusTarget = (selectedChangeId ?? focusedRevision)
+                .map { focusTarget(for: $0, revealsOnAppear: false) }
+        }
+        let generation = beginNewGraphRefresh()
         // A background refresh must not dismiss an error the user is still reading; manual refresh is an explicit retry.
         if !isAutoTriggered {
             error = nil
@@ -121,23 +89,14 @@ extension RepoViewModel {
             generation: generation,
             preferredCommitId: preferredCommitId,
             preferredRev: preferredSelection,
-            revset: revset,
+            revset: effectiveRevset,
             isAutoTriggered: isAutoTriggered
         )
         let token = JayJayGraphLoadToken()
         graphLoadToken = token
         graphLoadGeneration = generation
         let request = Self.graphRequest(revset: context.revset, rowCeiling: graphRowCeiling)
-        graphLoadSlowTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(Int64(clamping: request.firstResultBudgetMs)))
-            guard !Task.isCancelled,
-                  let self,
-                  graphRefreshGeneration == generation,
-                  !self.graphFirstSnapshotApplied,
-                  graphLoadToken != nil
-            else { return }
-            graphLoadSlow = true
-        }
+        graphLoadSlowTask = scheduleSlowLoadTask(generation: generation, request: request)
         let observer = MainActorLogGraphObserver { [weak self] event in
             self?.applyLogGraphEvent(event, context: context)
         }
@@ -149,6 +108,35 @@ extension RepoViewModel {
             observer: observer,
             request: request
         ))
+    }
+
+    private func beginNewGraphRefresh() -> UInt64 {
+        refreshTask?.cancel()
+        graphLoadToken?.cancel()
+        graphLoadSlowTask?.cancel()
+        graphRefreshGeneration &+= 1
+        isRefreshingInFlight = true
+        isLoading = graphEntries.isEmpty
+        graphLoadCanceling = false
+        graphLoadSlow = false
+        graphPaused = false
+        graphFirstSnapshotApplied = false
+        graphPendingSelectedChange = nil
+        canLoadMore = false
+        return graphRefreshGeneration
+    }
+
+    private func scheduleSlowLoadTask(generation: UInt64, request: LogGraphRequest) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int64(clamping: request.firstResultBudgetMs)))
+            guard !Task.isCancelled,
+                  let self,
+                  graphRefreshGeneration == generation,
+                  !self.graphFirstSnapshotApplied,
+                  graphLoadToken != nil
+            else { return }
+            graphLoadSlow = true
+        }
     }
 
     private func startGraphRefresh(_ run: RepoGraphRefreshRun) {
@@ -208,55 +196,6 @@ extension RepoViewModel {
         apply(context.statusBar)
     }
 
-    @MainActor
-    func applyGraphSnapshot(
-        _ snapshot: LogGraphSnapshot,
-        preferredCommitId: String?,
-        preferredRev: String?
-    ) {
-        let isFirst = !graphFirstSnapshotApplied
-        graphFirstSnapshotApplied = true
-        graphLoadSlowTask?.cancel()
-        graphLoadSlowTask = nil
-        graphLoadSlow = false
-        dagLayout = DAGLayout(computed: snapshot.layout)
-
-        if isFirst {
-            graphEntries = snapshot.entries
-        } else {
-            assert(snapshot.entries.count >= graphEntries.count)
-            assert(zip(graphEntries, snapshot.entries).allSatisfy { pair in
-                pair.0.change.commitId == pair.1.change.commitId
-            })
-            graphEntries.append(contentsOf: snapshot.entries.dropFirst(graphEntries.count))
-        }
-
-        if snapshot.isComplete {
-            canLoadMore = Self.canLoadMore(revset: revset, loadedCount: graphEntries.count)
-        }
-        if let workingCopy = snapshot.entries.first(where: { $0.change.isWorkingCopy })?.change {
-            applyWorkingCopy(changeId: workingCopy.changeId.id, description: workingCopy.description)
-        }
-        isLoading = false
-
-        guard isFirst else { return }
-        let selected = preferredCommitId.flatMap { commitId in
-            snapshot.entries.first(where: { $0.change.commitId.id == commitId })
-        } ?? preferredRev.flatMap { rev in
-            snapshot.entries.first(where: { $0.change.matchesRevision(rev) })
-        } ?? snapshot.entries.first(where: { $0.change.isWorkingCopy }) ?? snapshot.entries.first
-        if let selected,
-           let detail = graphPendingSelectedChange,
-           detail.info.commitId == selected.change.commitId
-        {
-            applySingleSelectedChange(detail)
-            fetchPrInfo(bookmarks: detail.info.bookmarks)
-        } else {
-            select(changeId: selected?.change.selectionRevision)
-        }
-        graphPendingSelectedChange = nil
-    }
-
     func refreshOrCancel() {
         if graphLoadToken != nil {
             cancelGraphLoad()
@@ -296,7 +235,8 @@ extension RepoViewModel {
     }
 
     func loadMore() {
-        guard !isShuttingDown, canLoadMore, let currentDepth = Self.defaultRevsetDepth(for: revset) else { return }
+        guard !isShuttingDown, focusedRevision == nil, canLoadMore,
+              let currentDepth = Self.defaultRevsetDepth(for: revset) else { return }
         revset = Self.buildDefaultRevset(depth: currentDepth + Self.defaultRevsetPageSize)
         refresh()
     }

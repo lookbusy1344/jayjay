@@ -21,6 +21,8 @@ protocol DAGActions: AnyObject {
     func showEvolog(rev: String)
     var canLoadMore: Bool { get }
     func loadMore()
+    func focus(on revision: String)
+    func clearFocus()
 }
 
 extension DAGActions {

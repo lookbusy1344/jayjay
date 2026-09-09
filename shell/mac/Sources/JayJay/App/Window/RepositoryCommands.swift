@@ -28,6 +28,12 @@ struct RepositoryCommands: Commands {
             .keyboardShortcut("u", modifiers: [.command, .shift])
             .disabled(repoPath == nil)
 
+            Button { tracker.handler?.focusSelectedChange() } label: {
+                Label("Focus on Selected Change", systemImage: "scope")
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .disabled(!tracker.canFocusSelectedChange)
+
             Divider()
 
             Button { tracker.handler?.showBookmarkManager() } label: {

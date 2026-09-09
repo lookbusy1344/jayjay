@@ -36,6 +36,50 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
         }
     }
 
+    /// Install streamed entries with the layout the core produced, rather than recomputing one as
+    /// `setGraph` does: progressive snapshots own their lane assignment.
+    func setStreamedGraph(_ entries: [GraphEntry], layout: JayJayCore.DagLayout) {
+        let changed = entries != graphEntries
+        graphEntries = entries
+        dagLayout = DAGLayout(computed: layout)
+        selectionGraph = DagSelectionGraph(entries: entries)
+        if changed {
+            graphGeneration &+= 1
+        }
+    }
+
+    /// Restore a captured graph verbatim, keeping its core-computed layout.
+    func restoreGraph(_ backup: GraphReplacementBackup) {
+        let changed = backup.entries != graphEntries
+        graphEntries = backup.entries
+        dagLayout = backup.layout
+        selectionGraph = DagSelectionGraph(entries: backup.entries)
+        if changed {
+            graphGeneration &+= 1
+        }
+    }
+
+    /// Apply deferred `is_empty` corrections to already-published rows in place. Returns whether any
+    /// row changed.
+    @discardableResult
+    func applyEmptyStateCorrections(_ isEmptyByCommitId: [String: Bool]) -> Bool {
+        var mutated = false
+        for index in graphEntries.indices {
+            guard let isEmpty = isEmptyByCommitId[graphEntries[index].change.commitId.id],
+                  graphEntries[index].change.isEmpty != isEmpty
+            else {
+                continue
+            }
+            graphEntries[index] = graphEntries[index]
+                .withChange(graphEntries[index].change.withIsEmpty(isEmpty))
+            mutated = true
+        }
+        if mutated {
+            graphGeneration &+= 1
+        }
+        return mutated
+    }
+
     func hasCombinedDiff(commitIds: [String]) -> Bool {
         selectionGraph?.selectionState(selectedCommitIds: commitIds).canDiff ?? false
     }
@@ -105,6 +149,21 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
     let diffStore = DiffStore()
 
     var revset: String = RepoViewModel.buildDefaultRevset()
+
+    /// The change whose connected lineage the graph is scoped to, or nil for the full base revset.
+    /// The base `revset` is untouched; focus composes an effective revset at request time.
+    var focusedRevision: String?
+    /// Exact commit identity captured when focus begins, used to validate every later focused refresh.
+    @ObservationIgnored var focusedCommitId: String?
+    /// Focus target awaiting its first appearance in a progressive snapshot. Descendants included by
+    /// `X::` can be emitted before X, so selection stays pending here rather than falling back to `@`.
+    @ObservationIgnored var pendingFocusTarget: PendingFocusTarget?
+    /// One-shot scroll request the content view forwards to the DAG when a pinned focus target loads.
+    var pendingDagReveal: DAGRevealRequest?
+    /// The visible DAG belongs to the previous revset until the replacement query publishes a snapshot.
+    var isGraphAwaitingReplacement = false
+    /// Retained until a replacement completes so a failed progressive stream can restore the last accepted graph instead of leaving an incomplete prefix visible.
+    @ObservationIgnored var graphReplacementBackup: GraphReplacementBackup?
 
     let repo: JayJayRepo
 
