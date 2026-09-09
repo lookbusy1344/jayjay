@@ -1,4 +1,5 @@
 mod diff_cache;
+mod focus;
 mod graph_data;
 mod loaded_content;
 mod loaders;
@@ -19,6 +20,7 @@ mod stats_state;
 mod tasks;
 
 pub use diff_cache::DiffCache;
+pub(crate) use focus::{GraphReplacementBackup, PendingFocusTarget};
 pub use graph_data::GraphData;
 pub(in crate::repo) use loaded_content::DiffLoadState;
 pub use loaded_content::{LoadedDiff, LoadedReviewSnapshot, SvgPreviewContent};
