@@ -2,10 +2,10 @@ use gpui::{Action, App};
 
 use crate::app::actions::{
     CloseWindow, CopyDiffSelection, DiffEditCollapseAll, DiffEditExpandAll, Dismiss,
-    FilterByRevset, MergeNextHunk, MergePreviousHunk, MergeUseLeftHunk, MergeUseRightHunk,
-    OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenKeyboardShortcuts, OpenOperationLog,
-    OpenOverview, OpenRepository, OpenSettings, Refresh, ResetZoom, SaveFileEditor,
-    SaveNoteComposer, ShowRepoInFileManager, ToggleSidebar, ZoomIn, ZoomOut,
+    FilterByRevset, FocusSelectedChange, MergeNextHunk, MergePreviousHunk, MergeUseLeftHunk,
+    MergeUseRightHunk, OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenKeyboardShortcuts,
+    OpenOperationLog, OpenOverview, OpenRepository, OpenSettings, Refresh, ResetZoom,
+    SaveFileEditor, SaveNoteComposer, ShowRepoInFileManager, ToggleSidebar, ZoomIn, ZoomOut,
 };
 use crate::app::key_caps::KeyCaps;
 
@@ -72,6 +72,10 @@ pub(super) const SECTIONS: &[ShortcutSection] = &[
         entries: &[
             ShortcutEntry::bound(jayjay_i18n::palette::hide_show_sidebar, &ToggleSidebar),
             ShortcutEntry::bound(jayjay_i18n::shortcuts::filter_by_revset, &FilterByRevset),
+            ShortcutEntry::bound(
+                jayjay_i18n::menu::hide_unrelated_changes,
+                &FocusSelectedChange,
+            ),
             ShortcutEntry::bound(jayjay_i18n::menu::zoom_in, &ZoomIn),
             ShortcutEntry::bound(jayjay_i18n::menu::zoom_out, &ZoomOut),
             ShortcutEntry::bound(jayjay_i18n::menu::reset_zoom, &ResetZoom),
