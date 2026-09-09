@@ -35,6 +35,12 @@ enum AID {
         static func bookmark(_ name: String) -> String {
             "dag.bookmark.\(name)"
         }
+
+        static func focus(_ revisionPrefix: String) -> String {
+            "dag.focus.\(revisionPrefix)"
+        }
+
+        static let clearFocus = "dag.focus.clear"
     }
 
     enum FileList {

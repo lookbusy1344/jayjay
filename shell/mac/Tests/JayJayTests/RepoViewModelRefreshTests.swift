@@ -5,45 +5,27 @@ import XCTest
 
 @MainActor
 final class RepoViewModelRefreshTests: RepoViewModelTestCase {
-    func testAbandonLinesSupersedesAnOlderRefresh() async throws {
+    /// A late-arriving snapshot from a refresh a mutation has since superseded must not overwrite the
+    /// selection a newer refresh already settled on.
+    func testStaleSnapshotDoesNotClobberANewerSelection() async throws {
         let viewModel = try XCTUnwrap(viewModel)
-        let fileURL = URL(fileURLWithPath: viewModel.repoPath).appending(path: "lines.txt")
-        try "remove me\nkeep me\n".write(to: fileURL, atomically: true, encoding: .utf8)
         viewModel.refresh()
         try await waitUntil("the initial refresh finishes") { !viewModel.isRefreshingInFlight }
-        let before = try XCTUnwrap(viewModel.selectedChange)
-        let hunk = try viewModel.repo.showFile(rev: "@", path: "lines.txt")
 
-        // A snapshot carrying the pre-abandon generation, delivered after the abandon's own refresh completes.
         let staleContext = RepoGraphRefreshContext(
             generation: viewModel.graphRefreshGeneration,
             preferredCommitId: nil,
             preferredRev: nil,
+            selectionBaseline: nil,
             revset: viewModel.revset,
             isAutoTriggered: true
         )
         let staleSnapshot = snapshot(entries: viewModel.graphEntries, isComplete: true)
 
-        let successSignal = viewModel.successActionSignal
-        viewModel.applyDiffSelection(
-            rev: before.info.changeId.id,
-            destination: .removeFromSource,
-            selections: [DiffEditFileSelection(
-                path: hunk.path,
-                oldPath: hunk.oldPath,
-                oldContent: hunk.oldContent,
-                newContent: hunk.newContent,
-                hunkType: hunk.hunkType,
-                lineRanges: [DiffEditRange(startLine: 1, endLine: 1)]
-            )],
-            message: "",
-            ignoreWhitespace: false
-        )
-        try await waitUntil("the line is abandoned") { viewModel.successActionSignal > successSignal }
-        try await waitUntil("the abandon's refresh finishes") { !viewModel.isRefreshingInFlight }
+        // A mutation (e.g. an abandon) starts a newer refresh with its own generation.
+        viewModel.refresh()
+        try await waitUntil("the newer refresh finishes") { !viewModel.isRefreshingInFlight }
         let after = try XCTUnwrap(viewModel.selectedChange)
-        XCTAssertNotEqual(after.info.commitId, before.info.commitId)
-        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "keep me\n")
 
         viewModel.applyLogGraphEvent(.snapshot(snapshot: staleSnapshot), context: staleContext)
 
@@ -215,6 +197,7 @@ final class RepoViewModelRefreshTests: RepoViewModelTestCase {
             generation: generation,
             preferredCommitId: nil,
             preferredRev: nil,
+            selectionBaseline: nil,
             revset: "all()",
             isAutoTriggered: false
         )

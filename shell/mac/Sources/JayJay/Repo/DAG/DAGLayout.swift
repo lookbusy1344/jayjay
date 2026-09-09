@@ -29,6 +29,9 @@ let dagOverflowNodeGap: CGFloat = 2
 /// The overflow chevron is an affordance, not a graph edge, so it carries a heavier rounded stroke
 /// than the neutral graph lines it sits beside.
 let dagOverflowMarkerStroke = StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+/// Transparent hit region for the overflow badge's focus button. Wider than the rendered disc so the
+/// pointer and VoiceOver can reach it reliably; it clears the row's own node, which sits far to the left.
+let dagOverflowMarkerTapSize: CGFloat = 24
 
 /// Where the real row's own graph content ends and its trailing elision bands begin, given the
 /// row's total measured height. Pure so band placement can be unit-tested without SwiftUI layout.

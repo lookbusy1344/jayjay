@@ -65,6 +65,13 @@ pub fn default_revset_depth(revset: &str) -> Option<u32> {
         .ok()
 }
 
+/// Scope `base` to the connected lineage of `target` (ancestors and descendants,
+/// inclusive), so a focused graph drops lanes unrelated to `target` while staying a
+/// subset of `base`. The result is a plain revset string parsed by the normal path.
+pub fn focus_revset(base: &str, target: &str) -> String {
+    format!("({base}) & (::{target} | {target}::)")
+}
+
 /// Selects the exact commit and all its ancestors, independent of bookmark names.
 pub fn ancestors_revset(commit_id: &str) -> String {
     format!("::commit_id({commit_id})")
@@ -85,6 +92,19 @@ mod tests {
         assert_eq!(
             default_revset_depth(&build_default_revset(20).replace("20", "x")),
             None
+        );
+    }
+
+    #[test]
+    fn focus_revset_composes_base_and_lineage() {
+        assert_eq!(focus_revset("all()", "abc"), "(all()) & (::abc | abc::)");
+    }
+
+    #[test]
+    fn focus_revset_parenthesises_compound_base() {
+        assert_eq!(
+            focus_revset("trunk() | mine()", "xyz"),
+            "(trunk() | mine()) & (::xyz | xyz::)"
         );
     }
 }
