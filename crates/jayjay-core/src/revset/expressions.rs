@@ -13,6 +13,11 @@ pub fn ancestors_revset(change_id: &str) -> String {
     format!("{ANCESTORS_PREFIX}change_id({change_id})")
 }
 
+/// Scope `base` to the connected lineage of `target` (ancestors and descendants, inclusive), so a focused graph drops lanes unrelated to `target` while staying a subset of `base`. The result is a plain revset string parsed by the normal path.
+pub fn focus_revset(base: &str, target: &str) -> String {
+    format!("({base}) & (::{target} | {target}::)")
+}
+
 pub fn bookmark_filter_revset(name: &str, remote: Option<&str>) -> String {
     let head = bookmark_head_revset(name, remote);
     format!("{head}{BOOKMARK_STACK_JOIN}{head}")
@@ -139,5 +144,14 @@ mod tests {
         for other in ["::a@origin@", "::change_id(a)", "a@ | trunk()..a@"] {
             assert_eq!(workspace_filter_name(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn focus_revset_scopes_the_base_to_the_targets_lineage() {
+        assert_eq!(focus_revset("all()", "abc"), "(all()) & (::abc | abc::)");
+        assert_eq!(
+            focus_revset("trunk() | mine()", "xyz"),
+            "(trunk() | mine()) & (::xyz | xyz::)"
+        );
     }
 }

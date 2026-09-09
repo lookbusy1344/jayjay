@@ -50,6 +50,12 @@ extension DAGView {
         geometry: DAGGeometry,
         value: DragGesture.Value
     ) {
+        guard !focusBadgeContains(
+            entry: entry,
+            layout: layout,
+            geometry: geometry,
+            location: value.startLocation
+        ) else { return }
         // A bookmark-chip drag (started on a child view) wins over the row rebase.
         guard bookmarkDrag == nil else { return }
         let action = DAGRebaseGesturePolicy.changeAction(
@@ -80,6 +86,12 @@ extension DAGView {
         geometry: DAGGeometry,
         value: DragGesture.Value
     ) {
+        guard !focusBadgeContains(
+            entry: entry,
+            layout: layout,
+            geometry: geometry,
+            location: value.startLocation
+        ) else { return }
         guard bookmarkDrag == nil else { return }
         let action = DAGRebaseGesturePolicy.endAction(
             entryIsImmutable: entry.change.isImmutable,
@@ -101,6 +113,30 @@ extension DAGView {
                 updateRebaseDrag(location: value.location)
                 confirmRebaseDrop()
         }
+    }
+
+    private func focusBadgeContains(
+        entry: GraphEntry,
+        layout: DAGLayout,
+        geometry: DAGGeometry,
+        location: CGPoint
+    ) -> Bool {
+        guard let frame = rebaseRowFrames[entry.change.commitId.id],
+              let row = layout.row(for: entry.change.commitId.id)
+        else { return false }
+        let columnCount = Int(row.graphColumnCount)
+        let width = geometry.graphWidth(forColumnCount: columnCount)
+        let nodeX = geometry.xPosition(forColumn: Int(row.nodeColumn))
+        let nodeRadius = DAGNodeStyle.resolve(change: entry.change, radius: geometry.nodeRadius).radius
+        let badge = dagOverflowBadgeLayout(
+            isGraphClipped: geometry.isClipped(forColumnCount: columnCount),
+            nodeTrailingX: nodeX + nodeRadius,
+            width: width
+        )
+        let localX = location.x - frame.minX - dagRowLeadingPadding
+        let localY = location.y - frame.minY
+        return dagFocusBadgeContains(x: localX, layout: badge)
+            && abs(localY - dagNodeCenterY) <= dagOverflowMarkerTapSize / 2
     }
 
     private func beginRebasePress(for entry: GraphEntry, layout: DAGLayout, geometry: DAGGeometry, location: CGPoint) {

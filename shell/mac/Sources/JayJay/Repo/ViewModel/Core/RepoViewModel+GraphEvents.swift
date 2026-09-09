@@ -27,9 +27,11 @@ extension RepoViewModel {
             case .finished:
                 applyGraphFinished(context: context)
             case .canceled:
+                restoreGraphReplacement()
                 finishGraphLoad(generation: context.generation)
                 resumePendingBackgroundRefresh()
             case let .failed(message):
+                restoreGraphReplacement()
                 finishGraphLoad(generation: context.generation)
                 hasFinishedFirstLoad = true
                 error = message
@@ -41,9 +43,13 @@ extension RepoViewModel {
     private func applyGraphFinished(context: RepoGraphRefreshContext) {
         finishGraphLoad(generation: context.generation)
         hasFinishedFirstLoad = true
-        canLoadMore = Self.canLoadMore(revset: context.revset, loadedCount: graphEntries.count)
-        if context.isAutoTriggered, isBackgroundRefreshSuspended {
-            hasPendingBackgroundRefresh = true
+        // The core omits the terminal is_complete snapshot when every row was already streamed, so the
+        // focus-root recovery that applyGraphSnapshot runs on completion must also run here.
+        if !recoverMissingFocusTarget(in: graphEntries) {
+            canLoadMore = Self.canLoadMore(revset: context.revset, loadedCount: graphEntries.count)
+            if context.isAutoTriggered, isBackgroundRefreshSuspended {
+                pendingBackgroundRefresh = .reload
+            }
         }
         resumePendingBackgroundRefresh()
     }
@@ -65,28 +71,21 @@ extension RepoViewModel {
         for update in updates {
             correctionsByCommitId[update.commitId] = update.isEmpty
         }
-        for index in graphEntries.indices {
-            guard let isEmpty = correctionsByCommitId[graphEntries[index].change.commitId.id],
-                  graphEntries[index].change.isEmpty != isEmpty
-            else {
-                continue
-            }
-            graphEntries[index] = graphEntries[index]
-                .withChange(graphEntries[index].change.withIsEmpty(isEmpty))
-        }
+        applyEmptyStateCorrections(correctionsByCommitId)
     }
 
     @MainActor
     private func applySnapshotEvent(_ snapshot: LogGraphSnapshot, context: RepoGraphRefreshContext) {
         if context.isAutoTriggered, isBackgroundRefreshSuspended {
-            hasPendingBackgroundRefresh = true
+            pendingBackgroundRefresh = .reload
             cancelGraphLoad()
             return
         }
         applyGraphSnapshot(
             snapshot,
             preferredCommitId: context.preferredCommitId,
-            preferredRev: context.preferredRev
+            preferredRev: context.preferredRev,
+            selectionBaseline: context.selectionBaseline
         )
     }
 
@@ -118,6 +117,7 @@ extension RepoViewModel {
         generation: UInt64
     ) {
         guard graphRefreshGeneration == generation else { return }
+        restoreGraphReplacement()
         finishGraphLoad(generation: generation)
         applyRefreshFailure(error, presence: presence)
     }

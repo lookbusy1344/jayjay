@@ -7,7 +7,7 @@
 //! renderer code — not by a hand-rolled column comparison or a duplicated Rust reimplementation.
 
 use jayjay_core::dag::{DagLayout, debug_render_log_graph_ascii};
-use jayjay_core::{GraphLoadToken, LogGraphEvent, LogGraphRequest, Repo};
+use jayjay_core::{GraphLoadToken, LogGraphEvent, LogGraphRequest, Repo, focus_revset};
 use jj_test::{
     DAG_PARITY_REVSET, build_dag_parity_repo, cli_log_graph_ascii, init_jj_repo, run_jj_in,
 };
@@ -90,6 +90,29 @@ fn limited_prefix_preserves_edges_whose_targets_have_not_loaded() {
         source.elisions_after.len(),
         1,
         "an indirect target beyond the real-row limit still produces jj log's synthetic elision"
+    );
+}
+
+/// Focus mode is a revset change, not a topology transform: the focused graph is the exact `jj log`
+/// of `focus_revset(base, target)`. Rendering that composed revset must match the real CLI's graph
+/// for the identical effective revset — same synthetic nodes, connectivity, ordering, and columns.
+#[test]
+fn focus_revset_graph_matches_the_cli_for_the_effective_revset() {
+    let (_temp_dir, repo_path) = build_dag_parity_repo();
+    let repo = Repo::open(&repo_path).expect("open repo");
+
+    let effective = focus_revset(DAG_PARITY_REVSET, "subject(exact:\"feature-head\")");
+    let entries = repo.log_graph(&effective).expect("load focused graph");
+    let ours = debug_render_log_graph_ascii(&entries, true);
+    let cli = cli_log_graph_ascii(&repo_path, &effective, None, true);
+
+    assert_eq!(ours, cli, "\njayjay:\n{ours}\n\njj log:\n{cli}\n");
+
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.change.description.trim() != "excl-1"),
+        "focusing feature-head's lineage must drop the unrelated excl-1 branch"
     );
 }
 

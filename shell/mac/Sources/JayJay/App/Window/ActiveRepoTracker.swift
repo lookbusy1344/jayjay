@@ -4,6 +4,7 @@ import SwiftUI
 /// Actions the Repository menu can invoke on the active window.
 @MainActor
 protocol RepositoryMenuHandler: AnyObject {
+    var canFocusSelectedChange: Bool { get }
     func showCommandPalette()
     func showUndo()
     func showRevsetFilter()
@@ -11,6 +12,7 @@ protocol RepositoryMenuHandler: AnyObject {
     func showOverview()
     func showNewWorkspace()
     func showPullRequestImport()
+    func focusSelectedChange()
 }
 
 /// Tracks the active repo window's path, settings, and menu handler.
@@ -22,6 +24,7 @@ final class ActiveRepoTracker {
 
     var repoPath: String?
     var settings: AppSettings?
+    var canFocusSelectedChange = false
 
     var handler: RepositoryMenuHandler? {
         guard let repoPath, !keyWindowIsOverview else { return nil }
@@ -43,8 +46,10 @@ final class ActiveRepoTracker {
                 if let path = window.representedURL?.path {
                     self?.repoPath = path
                     self?.keyWindowIsOverview = self?.overviewWindows.contains(window) == true
+                    self?.canFocusSelectedChange = self?.handlers[path]?.value?.canFocusSelectedChange ?? false
                 } else if window.identifier?.rawValue == AppWindows.repoList {
                     self?.repoPath = nil
+                    self?.canFocusSelectedChange = false
                 }
             }
         }
@@ -55,6 +60,12 @@ final class ActiveRepoTracker {
         self.settings = settings
         keyWindowIsOverview = false
         handlers[repoPath] = WeakRef(handler)
+        canFocusSelectedChange = handler.canFocusSelectedChange
+    }
+
+    func updateFocusEligibility(repoPath: String, canFocus: Bool) {
+        guard self.repoPath == repoPath else { return }
+        canFocusSelectedChange = canFocus
     }
 
     func registerOverview(_ window: NSWindow) {

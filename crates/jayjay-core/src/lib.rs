@@ -81,7 +81,7 @@ pub use revset::{
     RevsetCompletion, RevsetCompletionKind, RevsetFilter, RevsetFilterKind, RevsetFilterState,
     RevsetName, RevsetPreset, RevsetSuggestion, RevsetSuggestionKind, RevsetVocabulary,
     ancestors_revset, bookmark_filter_revset, build_default_revset, default_revset_depth,
-    default_revset_preset, revset_completions, revset_presets, typed_revset,
+    default_revset_preset, focus_revset, revset_completions, revset_presets, typed_revset,
     workspace_filter_revset,
 };
 pub use theme::{DiffPalette, DiffThemeColors, RepoColors, ThemeSeed, diff_palettes, repo_colors};
