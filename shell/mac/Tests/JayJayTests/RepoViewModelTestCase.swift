@@ -18,7 +18,8 @@ class RepoViewModelTestCase: XCTestCase {
             path: directory.path,
             repo: repo,
             workingCopyIsLarge: false,
-            configWarning: nil
+            configWarning: nil,
+            startsFileWatcher: false
         )
     }
 

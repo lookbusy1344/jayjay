@@ -148,7 +148,8 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
         repo: JayJayRepo,
         workingCopyIsLarge: Bool,
         configWarning: String?,
-        includeSubmoduleStatuses: Bool = false
+        includeSubmoduleStatuses: Bool = false,
+        startsFileWatcher: Bool = true
     ) {
         repoPath = path
         self.includeSubmoduleStatuses = includeSubmoduleStatuses
@@ -156,6 +157,7 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions {
         self.workingCopyIsLarge = workingCopyIsLarge
         aiProvider = Self.detectAIProvider()
         self.configWarning = configWarning
+        guard startsFileWatcher else { return }
         fsWatcher = RepoFSWatcher(
             repoPath: path,
             onChange: { [weak self] in self?.handleOperationChange() },
