@@ -1,4 +1,9 @@
-use jayjay_core::CoreError;
+use jayjay_core::{CoreError, error_message};
+
+#[uniffi::export]
+pub fn unwrap_command_error(message: String) -> String {
+    error_message::unwrap_command_error(&message)
+}
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum JayJayError {

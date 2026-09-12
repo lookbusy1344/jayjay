@@ -8,6 +8,7 @@ pub use jj_diff::syntax;
 mod cli;
 pub mod commit_message;
 pub mod dag;
+pub mod error_message;
 #[cfg(feature = "repository")]
 pub mod external_tools;
 #[cfg(feature = "repository")]
