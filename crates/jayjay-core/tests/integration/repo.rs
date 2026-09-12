@@ -221,19 +221,30 @@ fn change_info_surfaces_git_tags() {
     // then tag it. A jj command imports the git tag into jj's view.
     run_jj(&["-R", repo_str, "new", "-m", "child change"]);
     run_git(&repo_path, &["tag", "v1.0", "HEAD"]);
+    run_git(&repo_path, &["tag", "shipped", "HEAD"]);
+    run_jj(&["-R", repo_str, "new", "-m", "grandchild change"]);
+    run_git(&repo_path, &["tag", "v1.1", "HEAD"]);
     run_jj(&["-R", repo_str, "status"]);
 
     let repo = Repo::open(&repo_path).expect("open repo");
-    let parent = repo.show("@-").expect("show parent change");
+    let changes = repo.log("all()").expect("load log");
+    assert_eq!(
+        change_by_description(&changes, "initial change").tags,
+        ["shipped", "v1.0"]
+    );
+    assert_eq!(
+        change_by_description(&changes, "child change").tags,
+        ["v1.1"]
+    );
     assert!(
-        parent.info.tags.iter().any(|tag| tag == "v1.0"),
-        "expected git tag v1.0 on the parent change, got {:?}",
-        parent.info.tags
+        change_by_description(&changes, "grandchild change")
+            .tags
+            .is_empty(),
+        "the untagged working copy must not pick up a tag"
     );
 
-    // The untagged working copy must not pick up the tag.
-    let wc = repo.show("@").expect("show working copy");
-    assert!(wc.info.tags.is_empty(), "working copy should have no tags");
+    let parent = repo.show("@--").expect("show tagged change");
+    assert_eq!(parent.info.tags, ["shipped", "v1.0"]);
 }
 #[test]
 fn refresh_working_copy_snapshots_uncommitted_changes() {

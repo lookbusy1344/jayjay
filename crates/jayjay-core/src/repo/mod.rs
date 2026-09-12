@@ -1,5 +1,6 @@
 mod annotate;
 mod bookmarks;
+mod cache;
 mod command;
 mod command_process;
 mod commit_ai;
@@ -74,6 +75,7 @@ use jj_lib::repo_path::RepoPathBuf;
 use jj_lib::transaction::Transaction;
 use jj_lib::ui_path::RepoPathUiConverter;
 
+use cache::RepoCache;
 use command_process::RunningJjProcesses;
 pub use command_process::SyncToken;
 use support::{
@@ -89,7 +91,8 @@ pub struct Repo {
     workspace_name: jj_lib::ref_name::WorkspaceNameBuf,
     repo: RwLock<Arc<ReadonlyRepo>>,
     running_jj_processes: RunningJjProcesses,
-    immutable_ids_cache: RwLock<Option<(Arc<ReadonlyRepo>, Arc<log::ImmutableIds>)>>,
+    immutable_ids_cache: RepoCache<log::ImmutableIds>,
+    commit_tags_cache: RepoCache<HashMap<CommitId, Vec<String>>>,
     /// A workspace's changed-file count costs a full parent-tree diff, so keep the last count per workspace and re-diff only the ones whose working-copy commit moved.
     workspace_files_changed_cache: RwLock<HashMap<String, (CommitId, u32)>>,
     lfs_cache: Mutex<git::lfs::LfsCache>,
@@ -117,7 +120,8 @@ impl Repo {
             workspace_name: workspace.workspace_name().to_owned(),
             repo: RwLock::new(repo),
             running_jj_processes: RunningJjProcesses::default(),
-            immutable_ids_cache: RwLock::new(None),
+            immutable_ids_cache: RepoCache::default(),
+            commit_tags_cache: RepoCache::default(),
             workspace_files_changed_cache: RwLock::new(HashMap::new()),
             lfs_cache: Mutex::new(git::lfs::LfsCache::default()),
         })

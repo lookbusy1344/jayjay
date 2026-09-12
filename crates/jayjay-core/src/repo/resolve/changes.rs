@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit as JjCommit;
 use jj_lib::hex_util::encode_reverse_hex;
 use jj_lib::object_id::ObjectId;
@@ -38,13 +39,23 @@ impl Repo {
             .local_bookmarks_for_commit(commit.id())
             .map(|(name, _)| name.as_str().to_owned())
             .collect();
-        // jj_lib has no commit-scoped tag helper, so mirror local_bookmarks_for_commit.
-        let tags: Vec<String> = repo
-            .view()
-            .local_tags()
-            .filter(|(_, target)| target.added_ids().any(|id| id == commit.id()))
-            .map(|(name, _)| name.as_str().to_owned())
-            .collect();
+        let tags = self
+            .commit_tags_cache
+            .get_or_init(repo, || {
+                let mut tags: HashMap<CommitId, Vec<String>> = HashMap::new();
+                for (name, target) in repo.view().local_tags() {
+                    // A conflicted tag can repeat a commit across sides; keep its name once per commit.
+                    for id in target.added_ids().collect::<HashSet<_>>() {
+                        tags.entry(id.clone())
+                            .or_default()
+                            .push(name.as_str().to_owned());
+                    }
+                }
+                tags
+            })
+            .get(commit.id())
+            .cloned()
+            .unwrap_or_default();
         let working_copy_commit_id = repo.view().get_wc_commit_id(self.workspace_name.as_ref());
         let is_working_copy = working_copy_commit_id.is_some_and(|id| id == commit.id());
         let workspaces: Vec<String> = repo
