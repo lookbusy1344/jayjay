@@ -225,5 +225,5 @@ gpui-windows:
   PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" RUSTFLAGS="-Ctarget-feature=+crt-static" CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo xwin build --release --locked --target x86_64-pc-windows-msvc -p jayjay-gpui
   @echo "Built {{root}}/target/x86_64-pc-windows-msvc/release/jayjay-gpui.exe"
 
-gpui-test:
-  cargo test -p jayjay-gpui
+gpui-test *args:
+  cargo nextest run -p jayjay-gpui {{args}}
