@@ -57,7 +57,7 @@ wasm-grammars:
   bash "{{root}}/scripts/wasm-grammars.sh"
 
 test:
-  cargo test --workspace
+  cargo nextest run --workspace
 
 # Example: just profile diff sbs; just profile refresh ~/src/repo graph; just profile refresh --alloc ~/src/repo
 # Scenarios and caveats: crates/jj-diff/benches/profile_diff.md, crates/jayjay-core/benches/profile_refresh.md
