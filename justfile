@@ -56,7 +56,7 @@ test-wasm:
   AR_wasm32_unknown_unknown="$llvm_ar" CC_wasm32_unknown_unknown="{{root}}/scripts/llvm-clang" CXX_wasm32_unknown_unknown="{{root}}/scripts/llvm-clang" CFLAGS_wasm32_unknown_unknown="-DJAYJAY_WASM_SYSROOT_REV=5" CXXFLAGS_wasm32_unknown_unknown="-DJAYJAY_WASM_SYSROOT_REV=5" cargo build --locked -p jayjay-uniffi --no-default-features --features wasm --target wasm32-unknown-unknown --lib
 
 test:
-  cargo test --workspace
+  cargo nextest run --workspace
 
 # Example: just profile diff sbs; just profile refresh ~/src/repo graph; just profile refresh --alloc ~/src/repo
 # Scenarios and caveats: crates/jj-diff/benches/profile_diff.md, crates/jayjay-core/benches/profile_refresh.md
