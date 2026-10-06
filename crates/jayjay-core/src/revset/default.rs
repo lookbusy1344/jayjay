@@ -1,5 +1,5 @@
-pub const DEFAULT_REVSET_DEPTH: u32 = 20;
-pub const DEFAULT_REVSET: &str = "present(@) | ancestors(immutable_heads().., 20) | trunk()";
+pub const DEFAULT_REVSET_DEPTH: u32 = 50;
+pub const DEFAULT_REVSET: &str = "present(@) | ancestors(immutable_heads().., 50) | trunk()";
 
 const DEFAULT_REVSET_PREFIX: &str = "present(@) | ancestors(immutable_heads().., ";
 const DEFAULT_REVSET_SUFFIX: &str = ") | trunk()";
