@@ -3,7 +3,7 @@ import JayJayCore
 
 @Observable
 final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions, TagActions, RevsetActions {
-    static let defaultRevsetPageSize = 20
+    static let defaultRevsetPageSize = 50
 
     let repoPath: String
     /// Secondary workspaces are named after their checkout; the title shows the primary repo instead.

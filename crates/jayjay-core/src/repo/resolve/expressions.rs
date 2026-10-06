@@ -166,7 +166,7 @@ mod tests {
             &aliases_map,
             &FilesetAliasesMap::new(),
             "",
-            "present(@) | ancestors(immutable_heads().., 20) | trunk()",
+            "present(@) | ancestors(immutable_heads().., 50) | trunk()",
         )
         .expect("parse immutable_heads alias");
     }
