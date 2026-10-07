@@ -11,6 +11,8 @@ menu-command-palette = Command Palette
 menu-undo-last-operation = Undo Last Operation
 menu-filter-by-revset-ellipsis = Filter by Revset…
 menu-hide-unrelated-changes = Hide Unrelated Changes
+menu-show-elided-revisions = Show Elided Revisions
+menu-hide-expanded-revisions = Hide Expanded Revisions
 menu-bookmark-manager = Bookmark Manager
 menu-repo-overview = Repo Overview
 menu-new-workspace-ellipsis = New Workspace…
@@ -173,3 +175,6 @@ menu-commit-files =
     }
 menu-edit-file-at-line = Edit File at Line { $line }
 menu-action-at-line = { $action } at Line { $line }
+menu-clear-focus = Clear Focus
+menu-show-only-this-changes-ancestors-and-descendants = Show only this change's ancestors and descendants
+menu-add-the-revisions-hidden-below-this-change-to-the-graph = Add the revisions hidden below this change to the graph

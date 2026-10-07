@@ -26,6 +26,7 @@ struct DAGView: View {
     var bisect: BisectState?
     var selectionGraph: DagSelectionGraph?
     var isFocused = false
+    var expandedElisionOwners: Set<String> = []
     var isInteractionEnabled = true
 
     @State private var sidebarWidth: CGFloat = 0
@@ -68,6 +69,7 @@ struct DAGView: View {
         bisect: BisectState? = nil,
         selectionGraph: DagSelectionGraph? = nil,
         isFocused: Bool = false,
+        expandedElisionOwners: Set<String> = [],
         isInteractionEnabled: Bool = true
     ) {
         self.entries = entries
@@ -93,6 +95,7 @@ struct DAGView: View {
         self.bisect = bisect
         self.selectionGraph = selectionGraph
         self.isFocused = isFocused
+        self.expandedElisionOwners = expandedElisionOwners
         self.isInteractionEnabled = isInteractionEnabled
     }
 

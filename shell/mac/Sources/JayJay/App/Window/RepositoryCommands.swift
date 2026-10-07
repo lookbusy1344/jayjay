@@ -32,7 +32,17 @@ struct RepositoryCommands: Commands {
                 Label(Localized.Menu.hideUnrelatedChanges, systemImage: "scope")
             }
             .keyboardShortcut("l", modifiers: [.command, .shift])
-            .disabled(!tracker.canFocusSelectedChange)
+            .disabled(!tracker.graphMenuEligibility.canFocusSelectedChange)
+
+            Button { tracker.handler?.showSelectedElidedRevisions() } label: {
+                Label(Localized.Menu.showElidedRevisions, systemImage: "rectangle.expand.vertical")
+            }
+            .disabled(!tracker.graphMenuEligibility.canShowElidedRevisions)
+
+            Button { tracker.handler?.hideSelectedExpandedRevisions() } label: {
+                Label(Localized.Menu.hideExpandedRevisions, systemImage: "rectangle.compress.vertical")
+            }
+            .disabled(!tracker.graphMenuEligibility.canHideExpandedRevisions)
 
             Divider()
 
