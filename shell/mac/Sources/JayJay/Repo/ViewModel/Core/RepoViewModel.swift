@@ -176,6 +176,8 @@ final class RepoViewModel: ChangeActions, DAGActions, BookmarkActions, TagAction
     /// The change whose connected lineage the graph is scoped to, or nil for the full base revset.
     /// The base `revset` is untouched; focus composes an effective revset at request time.
     var focusedRevision: String?
+    /// Elision bands the user expanded, layered over the base `revset` beneath any focus.
+    var expandedElisions: [ElisionExpansion] = []
     /// Exact commit identity captured when focus begins, used to validate every later focused refresh.
     @ObservationIgnored var focusedCommitId: String?
     /// Focus target awaiting its first appearance in a progressive snapshot. Descendants included by

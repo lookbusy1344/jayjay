@@ -17,8 +17,8 @@ pub use default::{
     DEFAULT_REVSET, DEFAULT_REVSET_DEPTH, build_default_revset, default_revset_depth,
 };
 pub use expressions::{
-    BookmarkFilterTarget, ancestors_revset, bookmark_filter_revset, focus_revset,
-    workspace_filter_revset,
+    BookmarkFilterTarget, ancestors_revset, bookmark_filter_revset, expand_elision_revset,
+    focus_revset, workspace_filter_revset,
 };
 pub use filter::{RevsetFilter, RevsetFilterKind};
 pub use presets::{RevsetPreset, default_revset_preset, revset_presets};
