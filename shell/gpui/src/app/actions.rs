@@ -20,6 +20,8 @@ actions!(
         OpenBookmarkManager,
         OpenOverview,
         FocusSelectedChange,
+        ShowSelectedElidedRevisions,
+        HideSelectedExpandedRevisions,
         OpenOperationLog,
         FilterByRevset,
         OpenRepoInEditor,

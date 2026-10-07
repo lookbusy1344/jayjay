@@ -49,6 +49,13 @@ pub enum ContextAction {
     AbandonChange(SharedString),
     OpenEvologFor(SharedString),
     ShowAncestors(SharedString),
+    FocusOn(SharedString),
+    ClearFocus,
+    ExpandElisions {
+        owner: SharedString,
+        targets: Vec<SharedString>,
+    },
+    CollapseElisions(SharedString),
     UpdateWorkspace,
     OpenFileHistoryFor(SharedString),
     ToggleAnnotateFor(SharedString),

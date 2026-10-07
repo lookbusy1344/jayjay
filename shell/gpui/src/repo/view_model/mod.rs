@@ -1,4 +1,5 @@
 mod diff_cache;
+mod elision_expansion;
 mod focus;
 mod graph_data;
 mod loaded_content;
@@ -20,6 +21,7 @@ mod stats_state;
 mod tasks;
 
 pub use diff_cache::DiffCache;
+pub(crate) use elision_expansion::ElisionExpansion;
 pub(crate) use focus::{GraphReplacementBackup, PendingFocusTarget};
 pub use graph_data::GraphData;
 pub(in crate::repo) use loaded_content::DiffLoadState;

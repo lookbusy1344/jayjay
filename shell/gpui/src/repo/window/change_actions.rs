@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{App, Context};
+use gpui::{App, Context, SharedString};
 use jayjay_core::compare;
 use jayjay_core::dag::MergeParentChoice;
 use jayjay_core::{ChangeInfo, InsertPosition, MutationEffect, RebaseMode};
@@ -315,6 +315,7 @@ impl RepoWindow {
             glyph::ARROW_CLOCKWISE,
             ContextAction::OpenEvologFor(rev.clone().into()),
         ));
+        items.extend(self.graph_scope_items(change, cx));
 
         items.extend([
             ContextMenuItem::separator(),
@@ -375,6 +376,52 @@ impl RepoWindow {
                 label,
                 glyph::X_CIRCLE,
                 ContextAction::AbandonChange(rev.into()),
+            ));
+        }
+        items
+    }
+
+    /// Focus narrows the graph to this change's lineage; the elision items widen it by the revisions hidden below this row.
+    fn graph_scope_items(&self, change: &ChangeInfo, cx: &App) -> Vec<ContextMenuItem> {
+        let vm = self.vm.read(cx);
+        let revision: SharedString = change.selection_revision().to_owned().into();
+        let elided_targets = vm
+            .graph
+            .changes
+            .iter()
+            .position(|candidate| candidate.commit_id == change.commit_id)
+            .map(|ix| vm.elided_targets(ix))
+            .unwrap_or_default();
+        let mut items = vec![
+            ContextMenuItem::separator(),
+            ContextMenuItem::new(
+                "Hide Unrelated Changes",
+                glyph::FILTER,
+                ContextAction::FocusOn(revision.clone()),
+            ),
+        ];
+        if vm.focused_revision.is_some() {
+            items.push(ContextMenuItem::new(
+                "Clear Focus",
+                glyph::X_CIRCLE,
+                ContextAction::ClearFocus,
+            ));
+        }
+        if !elided_targets.is_empty() {
+            items.push(ContextMenuItem::new(
+                "Show Elided Revisions",
+                glyph::EYE,
+                ContextAction::ExpandElisions {
+                    owner: revision.clone(),
+                    targets: elided_targets,
+                },
+            ));
+        }
+        if vm.has_expanded_elisions(&revision) {
+            items.push(ContextMenuItem::new(
+                "Hide Expanded Revisions",
+                glyph::EYE_OFF,
+                ContextAction::CollapseElisions(revision),
             ));
         }
         items

@@ -4,8 +4,9 @@ use jayjay_core::GraphEntry;
 use super::super::{GraphReplacementBackup, PendingFocusTarget, RepoViewModel};
 
 impl RepoViewModel {
-    /// A new base filter shows in full: a stale focus would silently scope it to an unrelated change.
+    /// A new base filter shows in full: a stale focus or expansion would silently reshape it around unrelated changes.
     pub(super) fn clear_focus_for_new_filter(&mut self) {
+        self.expanded_elisions.clear();
         self.focused_revision = None;
         self.focused_commit_id = None;
         self.pending_focus_target = None;
@@ -76,11 +77,12 @@ impl RepoViewModel {
         true
     }
 
-    /// The revset actually queried: the base scoped to the focus target's lineage, or the base itself.
+    /// The revset actually queried: the expanded base scoped to the focus target's lineage, or the expanded base itself.
     pub(crate) fn effective_revset(&self) -> String {
+        let base = self.expanded_revset();
         match &self.focused_revision {
-            Some(target) => jayjay_core::focus_revset(self.revset(), target.as_ref()),
-            None => self.revset().to_owned(),
+            Some(target) => jayjay_core::focus_revset(&base, target.as_ref()),
+            None => base,
         }
     }
 

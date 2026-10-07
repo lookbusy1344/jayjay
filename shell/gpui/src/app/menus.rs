@@ -3,13 +3,14 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Menu, MenuItem, PathPromptOptions};
 
 use super::actions::{
-    ClearRecentRepositories, FilterByRevset, FocusSelectedChange, NewWorkspace,
-    NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette, OpenFind,
-    OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOperationLog, OpenOverview,
+    ClearRecentRepositories, FilterByRevset, FocusSelectedChange, HideSelectedExpandedRevisions,
+    NewWorkspace, NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette,
+    OpenFind, OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOperationLog, OpenOverview,
     OpenRecentRepository, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal,
     OpenRepository, OpenSettings, OpenUserGuide, Quit, ReportIssue, ResetZoom, SendFeedback,
-    ShowRepoInFileManager, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace, ToggleSideBySideDiff,
-    ToggleSidebar, ToggleTreeFileList, ZoomIn, ZoomOut,
+    ShowRepoInFileManager, ShowSelectedElidedRevisions, ToggleHideGitLfsFiles,
+    ToggleIgnoreWhitespace, ToggleSideBySideDiff, ToggleSidebar, ToggleTreeFileList, ZoomIn,
+    ZoomOut,
 };
 use super::config::{self, AppConfig, current};
 use super::tools;
@@ -57,6 +58,8 @@ fn app_menus(cx: &mut App) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Filter by Revset...", FilterByRevset),
             MenuItem::action("Hide Unrelated Changes", FocusSelectedChange),
+            MenuItem::action("Show Elided Revisions", ShowSelectedElidedRevisions),
+            MenuItem::action("Hide Expanded Revisions", HideSelectedExpandedRevisions),
             MenuItem::action("Bookmark Manager", OpenBookmarkManager),
             MenuItem::action("Repo Overview", OpenOverview),
             MenuItem::action("New Workspace...", NewWorkspace),

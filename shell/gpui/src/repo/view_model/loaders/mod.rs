@@ -2,6 +2,7 @@ mod annotate;
 mod avatar;
 mod diff;
 mod diff_compute;
+mod elisions;
 mod focus;
 mod pull_request;
 mod refresh;
