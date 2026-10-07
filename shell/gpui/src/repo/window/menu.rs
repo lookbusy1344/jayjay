@@ -177,6 +177,16 @@ impl RepoWindow {
                 self.open_edit_description(rev.to_string(), description.to_string(), cx)
             }
             ContextAction::ShowAncestors(commit_id) => self.show_ancestors(&commit_id, cx),
+            ContextAction::FocusOn(revision) => self.focus_on_revision(revision, cx),
+            ContextAction::ClearFocus => self.clear_focus(cx),
+            ContextAction::ExpandElisions { owner, targets } => {
+                self.vm
+                    .update(cx, |vm, cx| vm.expand_elisions(owner, targets, cx));
+            }
+            ContextAction::CollapseElisions(owner) => {
+                self.vm
+                    .update(cx, |vm, cx| vm.collapse_elisions(&owner, cx));
+            }
             ContextAction::UpdateWorkspace => {
                 self.vm
                     .update(cx, |vm, cx| vm.update_stale_workspace(cx))

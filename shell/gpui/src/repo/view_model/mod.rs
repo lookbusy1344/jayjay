@@ -1,5 +1,6 @@
 mod bisect_model;
 mod diff_cache;
+mod elision_expansion;
 mod focus;
 mod graph_data;
 mod loaded_content;
@@ -23,6 +24,7 @@ mod tasks;
 
 pub use bisect_model::BisectModel;
 pub use diff_cache::DiffCache;
+pub(crate) use elision_expansion::ElisionExpansion;
 pub(crate) use focus::{GraphReplacementBackup, PendingFocusTarget};
 pub use graph_data::GraphData;
 pub(crate) use loaded_content::DiffLoadState;

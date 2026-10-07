@@ -278,7 +278,8 @@ impl RepoViewModel {
                 self.pr_host_name = context.pr_host_name.map(SharedString::from);
                 self.working_copy_stats = context.working_copy_stats;
                 self.current_operation_description = context.operation;
-                self.fix_unavailable_reason = context.fix_unavailable_reason.map(SharedString::from);
+                self.fix_unavailable_reason =
+                    context.fix_unavailable_reason.map(SharedString::from);
                 self.bisect.state = context.bisect_state;
                 cx.notify();
             }
