@@ -25,6 +25,8 @@ actions!(
         OpenBookmarkManager,
         OpenOverview,
         FocusSelectedChange,
+        ShowSelectedElidedRevisions,
+        HideSelectedExpandedRevisions,
         OpenOperationLog,
         UndoOperation,
         RedoOperation,
