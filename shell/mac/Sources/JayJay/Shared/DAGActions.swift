@@ -27,6 +27,8 @@ protocol DAGActions: AnyObject {
     func loadMore()
     func focus(on revision: String)
     func clearFocus()
+    func expandElisions(owner: String, targets: [String])
+    func collapseElisions(owner: String)
 }
 
 extension DAGActions {

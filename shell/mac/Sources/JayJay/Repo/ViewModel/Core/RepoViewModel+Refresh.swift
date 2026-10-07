@@ -71,7 +71,8 @@ extension RepoViewModel {
     }
 
     private func reloadFilter(_ filter: RevsetFilterState, selecting revision: String) {
-        // A new base filter shows in full: a stale focus would silently scope it to an unrelated change.
+        // A new base filter shows in full: a stale focus or expansion would silently reshape it around unrelated changes.
+        expandedElisions = []
         focusedRevision = nil
         focusedCommitId = nil
         pendingFocusTarget = nil

@@ -21,6 +21,7 @@ struct DAGView: View {
     var refreshMode: RefreshMode = .refresh
     var loadMoreLabel = "Load More"
     var isFocused = false
+    var expandedElisionOwners: Set<String> = []
     var isInteractionEnabled = true
 
     @State private var sidebarWidth: CGFloat = 0
@@ -56,6 +57,7 @@ struct DAGView: View {
         refreshMode: RefreshMode = .refresh,
         loadMoreLabel: String = "Load More",
         isFocused: Bool = false,
+        expandedElisionOwners: Set<String> = [],
         isInteractionEnabled: Bool = true
     ) {
         self.entries = entries
@@ -76,6 +78,7 @@ struct DAGView: View {
         self.refreshMode = refreshMode
         self.loadMoreLabel = loadMoreLabel
         self.isFocused = isFocused
+        self.expandedElisionOwners = expandedElisionOwners
         self.isInteractionEnabled = isInteractionEnabled
     }
 

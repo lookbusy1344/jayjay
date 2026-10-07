@@ -49,9 +49,9 @@ extension RepoViewModel {
         refresh(selecting: selectedChangeId)
     }
 
-    /// The revset actually queried: the base scoped to the focus target's lineage, or the base itself.
+    /// The revset actually queried: the expanded base scoped to the focus target's lineage, or the expanded base itself.
     var effectiveRevset: String {
-        focusedRevision.map { focusRevset(base: revset, target: $0) } ?? revset
+        focusedRevision.map { focusRevset(base: expandedRevset, target: $0) } ?? expandedRevset
     }
 
     func resetGraphPaging() {

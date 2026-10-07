@@ -119,6 +119,11 @@ fn focus_revset(base: String, target: String) -> String {
 }
 
 #[uniffi::export]
+fn expand_elision_revset(base: String, owner: String, target: String) -> String {
+    jayjay_core::expand_elision_revset(&base, &owner, &target)
+}
+
+#[uniffi::export]
 fn revset_presets() -> Vec<RevsetPreset> {
     jayjay_core::revset_presets().to_vec()
 }

@@ -199,6 +199,10 @@ struct DAGViewModel {
         changeByRevision[changeId]
     }
 
+    func elidedTargets(of change: ChangeInfo) -> [String] {
+        layout.elidedTargets(of: change.commitId.id) { changeByRevision[$0]?.selectionRevision }
+    }
+
     func canSquashIntoParent(_ target: ChangeInfo) -> Bool {
         guard let parentId = target.parents.first else { return false }
         return change(for: parentId).map { !$0.isImmutable } ?? true

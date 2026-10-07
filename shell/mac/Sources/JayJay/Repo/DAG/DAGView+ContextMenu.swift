@@ -125,6 +125,7 @@ extension DAGView {
             }
         }
         historySection(entry: entry, rev: rev)
+        graphScopeSection(entry: entry, viewModel: viewModel)
 
         identifierCopySection(change: entry.change)
         moreActionsMenu(entry: entry, rev: rev)
@@ -167,6 +168,33 @@ extension DAGView {
         }
         Button { actions?.showEvolog(rev: rev) } label: {
             Label("Show evolution…", systemImage: "clock.arrow.circlepath")
+        }
+    }
+
+    @ViewBuilder
+    private func graphScopeSection(entry: GraphEntry, viewModel: DAGViewModel) -> some View {
+        let revision = entry.change.selectionRevision
+        let elidedTargets = viewModel.elidedTargets(of: entry.change)
+        Divider()
+        Button { actions?.focus(on: revision) } label: {
+            Label("Hide Unrelated Changes", systemImage: "scope")
+        }
+        .help("Show only this change's ancestors and descendants")
+        if isFocused {
+            Button { actions?.clearFocus() } label: {
+                Label("Clear Focus", systemImage: "xmark.circle")
+            }
+        }
+        if !elidedTargets.isEmpty {
+            Button { actions?.expandElisions(owner: revision, targets: elidedTargets) } label: {
+                Label("Show Elided Revisions", systemImage: "rectangle.expand.vertical")
+            }
+            .help("Add the revisions hidden below this change to the graph")
+        }
+        if expandedElisionOwners.contains(revision) {
+            Button { actions?.collapseElisions(owner: revision) } label: {
+                Label("Hide Expanded Revisions", systemImage: "rectangle.compress.vertical")
+            }
         }
     }
 

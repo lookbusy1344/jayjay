@@ -334,6 +334,21 @@ final class DAGViewModelTests: XCTestCase {
         )
     }
 
+    func testElidedTargetsUseTheLoadedRowsRevisionAndFallBackToTheCommitId() {
+        let owner = GraphEntry(
+            change: mockChangeInfo(changeId: "S", commitId: "sss", parents: ["x1", "x2"]),
+            edges: [
+                GraphEdge(target: "bbb", edgeType: .indirect),
+                GraphEdge(target: "unloaded", edgeType: .indirect)
+            ]
+        )
+        let base = makeEntry(changeId: "B", commitId: "bbb", isDivergent: false)
+        let viewModel = makeViewModel(entries: [owner, base], selectedId: "S")
+
+        XCTAssertEqual(viewModel.elidedTargets(of: owner.change), ["B", "unloaded"])
+        XCTAssertEqual(viewModel.elidedTargets(of: base.change), [])
+    }
+
     func testIgnoresPlainNPNavigation() {
         XCTAssertNil(DAGViewModel.selectionDelta(keyCode: 0, charactersIgnoringModifiers: "n", controlPressed: false))
         XCTAssertNil(DAGViewModel.selectionDelta(keyCode: 0, charactersIgnoringModifiers: "p", controlPressed: false))
