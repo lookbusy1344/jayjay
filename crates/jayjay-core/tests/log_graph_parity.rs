@@ -7,7 +7,9 @@
 //! renderer code — not by a hand-rolled column comparison or a duplicated Rust reimplementation.
 
 use jayjay_core::dag::{DagLayout, debug_render_log_graph_ascii};
-use jayjay_core::{GraphLoadToken, LogGraphEvent, LogGraphRequest, Repo, focus_revset};
+use jayjay_core::{
+    GraphLoadToken, LogGraphEvent, LogGraphRequest, Repo, expand_elision_revset, focus_revset,
+};
 use jj_test::{
     DAG_PARITY_REVSET, build_dag_parity_repo, cli_log_graph_ascii, init_jj_repo, run_jj_in,
 };
@@ -113,6 +115,47 @@ fn focus_revset_graph_matches_the_cli_for_the_effective_revset() {
             .iter()
             .all(|entry| entry.change.description.trim() != "excl-1"),
         "focusing feature-head's lineage must drop the unrelated excl-1 branch"
+    );
+}
+
+/// Expanding `source`'s elision reveals the excluded commits between it and `base`, and only that band disappears.
+#[test]
+fn expanding_an_elision_reveals_its_revisions_and_matches_the_cli() {
+    let (_temp_dir, repo_path) = build_dag_parity_repo();
+    let repo = Repo::open(&repo_path).expect("open repo");
+
+    let effective = expand_elision_revset(
+        DAG_PARITY_REVSET,
+        "subject(exact:\"source\")",
+        "subject(exact:\"base\")",
+    );
+    let entries = repo.log_graph(&effective).expect("load expanded graph");
+    let ours = debug_render_log_graph_ascii(&entries, true);
+    let cli = cli_log_graph_ascii(&repo_path, &effective, None, true);
+    assert_eq!(ours, cli, "\njayjay:\n{ours}\n\njj log:\n{cli}\n");
+
+    let described = |name: &str| {
+        entries
+            .iter()
+            .find(|entry| entry.change.description.trim() == name)
+            .unwrap_or_else(|| panic!("{name} missing from the expanded graph"))
+    };
+    described("excl-1");
+    described("excl-2");
+    let layout = DagLayout::compute(&entries, true);
+    let elisions_of = |name: &str| {
+        let commit_id = &described(name).change.commit_id.id;
+        layout
+            .rows
+            .iter()
+            .find(|row| &row.commit_id == commit_id)
+            .map(|row| row.elisions_after.len())
+    };
+    assert_eq!(elisions_of("source"), Some(0));
+    assert_eq!(
+        elisions_of("two-elisions"),
+        Some(2),
+        "other rows keep their elisions"
     );
 }
 

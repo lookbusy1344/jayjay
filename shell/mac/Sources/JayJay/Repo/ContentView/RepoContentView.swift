@@ -55,13 +55,15 @@ struct RepoContentView: View {
                         case .pullRequestImport: modal = .pullRequestImport
                         case .restoreOperation: restorableOperation.map(restoreOperation)
                         case .focusSelectedChange: viewModel.focusSelectedChange()
+                        case .showSelectedElidedRevisions: viewModel.showSelectedElidedRevisions()
+                        case .hideSelectedExpandedRevisions: viewModel.hideSelectedExpandedRevisions()
                     }
                 }
                 menuCoordinator.viewModel = viewModel
                 ActiveRepoTracker.shared.register(
                     repoPath: viewModel.repoPath, settings: settings, handler: menuCoordinator
                 )
-                updateFocusMenuEligibility()
+                updateGraphMenuEligibility()
                 // Defeat AppKit auto-focus on CommitBox so j/k nav works on cold launch.
                 if !hasResetInitialFocus {
                     hasResetInitialFocus = true
@@ -90,8 +92,7 @@ struct RepoContentView: View {
             .onChange(of: settings.sidebarHidden, initial: true) { wasHidden, hidden in
                 handleSidebarVisibilityChange(hidden: hidden, animated: wasHidden != hidden)
             }
-            .onChange(of: viewModel.selectedChangeId) { updateFocusMenuEligibility() }
-            .onChange(of: viewModel.focusedRevision) { updateFocusMenuEligibility() }
+            .onChange(of: viewModel.graphMenuEligibility) { updateGraphMenuEligibility() }
             .onChange(of: viewModel.pendingDagReveal) { _, request in
                 guard let request else { return }
                 viewModel.dagRevealRequest = request
@@ -249,13 +250,9 @@ struct RepoContentView: View {
         modal != nil || detailInteractionActive
     }
 
-    private func updateFocusMenuEligibility() {
-        let canFocus = viewModel.selectedChangeId != nil
-            && viewModel.selectedChangeId != viewModel.focusedRevision
-        menuCoordinator.canFocusSelectedChange = canFocus
-        ActiveRepoTracker.shared.updateFocusEligibility(
-            repoPath: viewModel.repoPath,
-            canFocus: canFocus
-        )
+    private func updateGraphMenuEligibility() {
+        let eligibility = viewModel.graphMenuEligibility
+        menuCoordinator.graphMenuEligibility = eligibility
+        ActiveRepoTracker.shared.updateGraphMenuEligibility(repoPath: viewModel.repoPath, eligibility: eligibility)
     }
 }

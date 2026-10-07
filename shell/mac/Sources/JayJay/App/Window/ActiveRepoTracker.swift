@@ -9,7 +9,7 @@ protocol RepositoryMenuHandler: AnyObject {
     var reviewMode: ReviewMode { get }
     func canPerformShortcut(_ shortcut: AppShortcut) -> Bool
     func performShortcut(_ shortcut: AppShortcut)
-    var canFocusSelectedChange: Bool { get }
+    var graphMenuEligibility: GraphMenuEligibility { get }
     func showCommandPalette()
     func showRevsetFilter()
     func showBookmarkManager()
@@ -22,6 +22,8 @@ protocol RepositoryMenuHandler: AnyObject {
     func undoOperation()
     func redoOperation()
     func focusSelectedChange()
+    func showSelectedElidedRevisions()
+    func hideSelectedExpandedRevisions()
 }
 
 /// Tracks the active repo window's path, settings, and menu handler.
@@ -33,7 +35,7 @@ final class ActiveRepoTracker {
 
     var repoPath: String?
     var settings: AppSettings?
-    var canFocusSelectedChange = false
+    var graphMenuEligibility = GraphMenuEligibility.none
 
     var handler: RepositoryMenuHandler? {
         guard let repoPath, !keyWindowIsOverview else { return nil }
@@ -55,10 +57,10 @@ final class ActiveRepoTracker {
                 if let path = window.representedURL?.repositoryLocationPath {
                     self?.repoPath = path
                     self?.keyWindowIsOverview = self?.overviewWindows.contains(window) == true
-                    self?.canFocusSelectedChange = self?.handlers[path]?.value?.canFocusSelectedChange ?? false
+                    self?.graphMenuEligibility = self?.handlers[path]?.value?.graphMenuEligibility ?? .none
                 } else if window.identifier?.rawValue == AppWindows.repoList {
                     self?.repoPath = nil
-                    self?.canFocusSelectedChange = false
+                    self?.graphMenuEligibility = .none
                 }
             }
         }
@@ -69,12 +71,12 @@ final class ActiveRepoTracker {
         self.settings = settings
         keyWindowIsOverview = false
         handlers[repoPath] = WeakRef(handler)
-        canFocusSelectedChange = handler.canFocusSelectedChange
+        graphMenuEligibility = handler.graphMenuEligibility
     }
 
-    func updateFocusEligibility(repoPath: String, canFocus: Bool) {
+    func updateGraphMenuEligibility(repoPath: String, eligibility: GraphMenuEligibility) {
         guard self.repoPath == repoPath else { return }
-        canFocusSelectedChange = canFocus
+        graphMenuEligibility = eligibility
     }
 
     func registerOverview(_ window: NSWindow) {
