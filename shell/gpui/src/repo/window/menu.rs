@@ -198,6 +198,16 @@ impl RepoWindow {
                 self.restore_operation(operation.to_string(), cx)
             }
             ContextAction::CommitWorkingCopy(rev) => self.commit_working_copy_from_menu(&rev, cx),
+            ContextAction::FocusOn(revision) => self.focus_on_revision(revision, cx),
+            ContextAction::ClearFocus => self.clear_focus(cx),
+            ContextAction::ExpandElisions { owner, targets } => {
+                self.vm
+                    .update(cx, |vm, cx| vm.expand_elisions(owner, targets, cx));
+            }
+            ContextAction::CollapseElisions(owner) => {
+                self.vm
+                    .update(cx, |vm, cx| vm.collapse_elisions(&owner, cx));
+            }
             ContextAction::UpdateWorkspace => {
                 self.vm
                     .update(cx, |vm, cx| vm.update_stale_workspace(cx))

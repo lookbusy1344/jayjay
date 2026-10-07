@@ -27,6 +27,8 @@ actions!(
         ToggleOperationLog,
         RestoreSelectedOperation,
         FocusSelectedChange,
+        ShowSelectedElidedRevisions,
+        HideSelectedExpandedRevisions,
         UndoOperation,
         RedoOperation,
         FilterByRevset,

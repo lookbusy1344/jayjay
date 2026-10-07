@@ -3,12 +3,12 @@ use gpui::{Context, Div, InteractiveElement, Styled, Window, div, rgb};
 use super::super::{RepoModal, RepoWindow};
 use crate::app::actions::{
     CopyDiffSelection, DiffEditCollapseAll, DiffEditExpandAll, FilterByRevset, FocusSelectedChange,
-    ForgetStaleBookmarks, GitFetchOrigin, GitPushDefault, NewWorkspace,
-    NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette, OpenFind,
-    OpenOverview, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal, OpenSettings,
-    ReconnectSsh, RedoOperation, Refresh, RestoreSelectedOperation, SaveFileEditor,
-    SaveNoteComposer, ShowRepoInFileManager, ToggleOperationLog, ToggleReviewMode, ToggleSidebar,
-    ToggleStatusBar, UndoOperation,
+    ForgetStaleBookmarks, GitFetchOrigin, GitPushDefault, HideSelectedExpandedRevisions,
+    NewWorkspace, NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette,
+    OpenFind, OpenOverview, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal,
+    OpenSettings, ReconnectSsh, RedoOperation, Refresh, RestoreSelectedOperation, SaveFileEditor,
+    SaveNoteComposer, ShowRepoInFileManager, ShowSelectedElidedRevisions, ToggleOperationLog,
+    ToggleReviewMode, ToggleSidebar, ToggleStatusBar, UndoOperation,
 };
 use crate::app::theme::Theme;
 use crate::platform::append_menu_bar;
@@ -42,6 +42,14 @@ impl RepoWindow {
             .on_action(cx.listener(|view, _: &OpenFind, _, cx| view.open_find(cx)))
             .on_action(cx.listener(|view, _: &FocusSelectedChange, _, cx| {
                 view.focus_selected_change(cx);
+            }))
+            .on_action(cx.listener(|view, _: &ShowSelectedElidedRevisions, _, cx| {
+                view.vm
+                    .update(cx, |vm, cx| vm.show_selected_elided_revisions(cx));
+            }))
+            .on_action(cx.listener(|view, _: &HideSelectedExpandedRevisions, _, cx| {
+                view.vm
+                    .update(cx, |vm, cx| vm.hide_selected_expanded_revisions(cx));
             }))
             .on_action(cx.listener(|view, _: &OpenBookmarkManager, _, cx| {
                 view.open_bookmark_manager(cx);
