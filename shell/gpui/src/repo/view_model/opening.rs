@@ -168,6 +168,7 @@ impl RepoViewModel {
             can_load_more: default_revset_depth(&revset_filter.revset)
                 .is_some_and(|depth| changes.len() >= depth as usize),
             focused_revision: None,
+            expanded_elisions: Vec::new(),
             focused_commit_id: None,
             pending_focus_target: None,
             pending_focus_reveal: None,
@@ -222,6 +223,7 @@ impl RepoViewModel {
             revset_filter: RevsetFilterState::new(&build_default_revset(DEFAULT_REVSET_DEPTH)),
             can_load_more: false,
             focused_revision: None,
+            expanded_elisions: Vec::new(),
             focused_commit_id: None,
             pending_focus_target: None,
             pending_focus_reveal: None,
