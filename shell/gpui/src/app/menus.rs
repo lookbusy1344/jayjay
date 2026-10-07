@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use gpui::{App, Menu, MenuItem, PathPromptOptions};
 
 use super::actions::{
-    ClearRecentRepositories, CloneRepository, FilterByRevset, FocusSelectedChange, NewWorkspace,
-    NewWorkspaceFromPullRequest, OpenAbout, OpenBookmarkManager, OpenCommandPalette, OpenFind,
-    OpenJujutsuDocumentation, OpenKeyboardShortcuts, OpenOperationLog, OpenOverview,
-    OpenRecentRepository, OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal,
-    OpenRepository, OpenSettings, OpenUserGuide, Quit, ReportIssue, ResetZoom, RevealLogs,
-    SendFeedback, ShowRepoInFileManager, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace,
+    ClearRecentRepositories, CloneRepository, FilterByRevset, FocusSelectedChange,
+    HideSelectedExpandedRevisions, NewWorkspace, NewWorkspaceFromPullRequest, OpenAbout,
+    OpenBookmarkManager, OpenCommandPalette, OpenFind, OpenJujutsuDocumentation,
+    OpenKeyboardShortcuts, OpenOperationLog, OpenOverview, OpenRecentRepository,
+    OpenRemoteRepository, OpenRepoInEditor, OpenRepoInTerminal, OpenRepository, OpenSettings,
+    OpenUserGuide, Quit, ReportIssue, ResetZoom, RevealLogs, SendFeedback, ShowRepoInFileManager,
+    ShowSelectedElidedRevisions, ToggleHideGitLfsFiles, ToggleIgnoreWhitespace,
     ToggleSideBySideDiff, ToggleSidebar, ToggleTreeFileList, ZoomIn, ZoomOut,
 };
 use super::config::{self, AppConfig, current};
@@ -68,6 +69,14 @@ fn app_menus(cx: &mut App) -> Vec<Menu> {
             MenuItem::action(
                 jayjay_i18n::menu::hide_unrelated_changes(),
                 FocusSelectedChange,
+            ),
+            MenuItem::action(
+                jayjay_i18n::menu::show_elided_revisions(),
+                ShowSelectedElidedRevisions,
+            ),
+            MenuItem::action(
+                jayjay_i18n::menu::hide_expanded_revisions(),
+                HideSelectedExpandedRevisions,
             ),
             MenuItem::action(jayjay_i18n::menu::bookmark_manager(), OpenBookmarkManager),
             MenuItem::action(jayjay_i18n::menu::repo_overview(), OpenOverview),
