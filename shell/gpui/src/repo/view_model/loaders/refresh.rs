@@ -285,7 +285,8 @@ impl RepoViewModel {
                 self.working_copy_stats = context.working_copy_stats;
                 self.current_operation_description = context.operation;
                 self.undo_state = context.undo;
-                self.fix_unavailable_reason = context.fix_unavailable_reason.map(SharedString::from);
+                self.fix_unavailable_reason =
+                    context.fix_unavailable_reason.map(SharedString::from);
                 self.bisect.state = context.bisect_state;
                 cx.notify();
             }

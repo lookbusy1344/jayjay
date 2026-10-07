@@ -9,6 +9,7 @@ impl ContextAction {
             Self::CreateTag(_) => Some('t'),
             Self::EditDescription { .. } => Some('d'),
             Self::OpenEvologFor(_) => Some('v'),
+            Self::ExpandElisions { .. } | Self::CollapseElisions(_) => Some('l'),
             Self::AbandonChange(_) => Some('a'),
             Self::Change(action) => match action.as_ref() {
                 ChangeAction::Edit { .. } => Some('e'),
