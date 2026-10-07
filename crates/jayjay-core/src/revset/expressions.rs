@@ -18,6 +18,11 @@ pub fn focus_revset(base: &str, target: &str) -> String {
     format!("({base}) & (::{target} | {target}::)")
 }
 
+/// Add the revisions an elision band hides: every path from `target` up to `owner`, the row that owns the band. `present` lets an expansion outlive an abandoned end without failing the graph load. Expansions stack by applying this to its own result.
+pub fn expand_elision_revset(base: &str, owner: &str, target: &str) -> String {
+    format!("({base}) | (present({target})::present({owner}))")
+}
+
 pub fn bookmark_filter_revset(name: &str, remote: Option<&str>) -> String {
     let head = bookmark_head_revset(name, remote);
     format!("{head}{BOOKMARK_STACK_JOIN}{head}")
@@ -148,6 +153,14 @@ mod tests {
         for other in ["::a@origin@", "::change_id(a)", "a@ | trunk()..a@"] {
             assert_eq!(workspace_filter_name(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn elision_expansion_adds_every_path_between_target_and_owner() {
+        assert_eq!(
+            expand_elision_revset("trunk() | mine()", "own", "tgt"),
+            "(trunk() | mine()) | (present(tgt)::present(own))"
+        );
     }
 
     #[test]

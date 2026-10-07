@@ -57,6 +57,7 @@ extension RepoContentView {
                 bisect: viewModel.bisect.state,
                 selectionGraph: viewModel.selectionGraph,
                 isFocused: viewModel.focusedRevision != nil,
+                expandedElisionOwners: viewModel.expandedElisionOwners,
                 isInteractionEnabled: !viewModel.isGraphAwaitingReplacement
             )
             .opacity(viewModel.isGraphAwaitingReplacement ? 0.45 : 1)

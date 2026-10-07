@@ -18,11 +18,12 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     @ObservationIgnored var onAction: ((MenuAction) -> Void)?
     @ObservationIgnored weak var viewModel: RepoViewModel?
-    var canFocusSelectedChange = false
+    var graphMenuEligibility = GraphMenuEligibility.none
 
     enum MenuAction {
         case shortcut(AppShortcut)
-        case commandPalette, operationLog, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange
+        case commandPalette, operationLog, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange,
+             showSelectedElidedRevisions, hideSelectedExpandedRevisions
     }
 
     func showCommandPalette() {
@@ -69,5 +70,13 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     func focusSelectedChange() {
         onAction?(.focusSelectedChange)
+    }
+
+    func showSelectedElidedRevisions() {
+        onAction?(.showSelectedElidedRevisions)
+    }
+
+    func hideSelectedExpandedRevisions() {
+        onAction?(.hideSelectedExpandedRevisions)
     }
 }
