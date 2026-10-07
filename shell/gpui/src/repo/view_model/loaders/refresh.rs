@@ -280,7 +280,8 @@ impl RepoViewModel {
                 self.gerrit_update_title = context.gerrit_update_title.map(SharedString::from);
                 self.working_copy_stats = context.working_copy_stats;
                 self.current_operation_description = context.operation;
-                self.fix_unavailable_reason = context.fix_unavailable_reason.map(SharedString::from);
+                self.fix_unavailable_reason =
+                    context.fix_unavailable_reason.map(SharedString::from);
                 self.bisect.state = context.bisect_state;
                 cx.notify();
             }
