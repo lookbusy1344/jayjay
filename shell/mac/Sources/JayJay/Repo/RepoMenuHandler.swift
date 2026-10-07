@@ -3,10 +3,11 @@ import SwiftUI
 @MainActor
 final class RepoMenuHandler: RepositoryMenuHandler {
     var onAction: ((MenuAction) -> Void)?
-    var canFocusSelectedChange = false
+    var graphMenuEligibility = GraphMenuEligibility.none
 
     enum MenuAction {
-        case commandPalette, undo, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange
+        case commandPalette, undo, revsetFilter, bookmarkManager, overview, newWorkspace, pullRequestImport, focusSelectedChange,
+            showSelectedElidedRevisions, hideSelectedExpandedRevisions
     }
 
     func showCommandPalette() {
@@ -39,5 +40,13 @@ final class RepoMenuHandler: RepositoryMenuHandler {
 
     func focusSelectedChange() {
         onAction?(.focusSelectedChange)
+    }
+
+    func showSelectedElidedRevisions() {
+        onAction?(.showSelectedElidedRevisions)
+    }
+
+    func hideSelectedExpandedRevisions() {
+        onAction?(.hideSelectedExpandedRevisions)
     }
 }

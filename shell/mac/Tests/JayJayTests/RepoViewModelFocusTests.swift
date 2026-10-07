@@ -384,6 +384,111 @@ final class RepoViewModelFocusTests: XCTestCase {
         XCTAssertEqual(viewModel.pendingDagReveal?.changeId, "Y")
     }
 
+    func testExpandingElisionsUnionsEachHiddenPathIntoTheBaseOnce() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: "all()", previous: nil, recent: [])
+
+        viewModel.expandElisions(owner: "S", targets: ["T1", "T2"])
+        try await waitUntil("the expanded request starts") { repo.requestCount == 1 }
+        viewModel.expandElisions(owner: "S", targets: ["T1"])
+
+        let expanded = "((all()) | (present(T1)::present(S))) | (present(T2)::present(S))"
+        XCTAssertEqual(repo.requests.last?.revset, expanded)
+        XCTAssertEqual(viewModel.effectiveRevset, expanded)
+        XCTAssertEqual(repo.requestCount, 1, "re-expanding a shown path must not reload")
+        XCTAssertEqual(viewModel.expandedElisionOwners, ["S"])
+    }
+
+    func testExpandingWhileFocusedKeepsTheFocusScopedOverTheExpandedBase() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: "all()", previous: nil, recent: [])
+        viewModel.seedGraphEntriesForTesting([entry(changeId: "S", commitId: "sss")])
+
+        viewModel.focus(on: "S")
+        try await waitUntil("the focused request starts") { repo.requestCount == 1 }
+        viewModel.expandElisions(owner: "S", targets: ["T"])
+        try await waitUntil("the expanded request starts") { repo.requestCount == 2 }
+
+        XCTAssertEqual(viewModel.focusedRevision, "S")
+        XCTAssertEqual(repo.requests.last?.revset, "((all()) | (present(T)::present(S))) & (::S | S::)")
+    }
+
+    func testHidingARowsExpandedRevisionsKeepsOtherRowsExpanded() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: "all()", previous: nil, recent: [])
+
+        viewModel.expandElisions(owner: "S", targets: ["T"])
+        try await waitUntil("the first expanded request starts") { repo.requestCount == 1 }
+        viewModel.expandElisions(owner: "R", targets: ["Q"])
+        try await waitUntil("the second expanded request starts") { repo.requestCount == 2 }
+        viewModel.collapseElisions(owner: "S")
+        try await waitUntil("the collapsed request starts") { repo.requestCount == 3 }
+        viewModel.collapseElisions(owner: "S")
+
+        XCTAssertEqual(viewModel.expandedElisionOwners, ["R"])
+        XCTAssertEqual(repo.requests.last?.revset, "(all()) | (present(Q)::present(R))")
+        XCTAssertEqual(repo.requestCount, 3, "collapsing a row with nothing expanded must not reload")
+    }
+
+    func testApplyRevsetDropsExpansionsBeforeSendingNewBase() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: "all()", previous: nil, recent: [])
+
+        viewModel.expandElisions(owner: "S", targets: ["T"])
+        try await waitUntil("the expanded request starts") { repo.requestCount == 1 }
+        viewModel.applyFilter("mine()")
+        try await waitUntil("the new base request starts") { repo.requestCount == 2 }
+
+        XCTAssertEqual(viewModel.expandedElisionOwners, [])
+        XCTAssertEqual(repo.requests.last?.revset, "mine()")
+    }
+
+    func testLoadingMoreKeepsExpansionsOverTheDeeperDefaultRevset() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: RepoViewModel.buildDefaultRevset(), previous: nil, recent: [])
+
+        viewModel.expandElisions(owner: "S", targets: ["T"])
+        try await waitUntil("the expanded request starts") { repo.requestCount == 1 }
+        viewModel.canLoadMore = true
+        viewModel.loadMore()
+        try await waitUntil("the deeper request starts") { repo.requestCount == 2 }
+
+        let deeper = RepoViewModel.buildDefaultRevset(depth: 2 * RepoViewModel.defaultRevsetPageSize)
+        XCTAssertEqual(repo.requests.last?.revset, "(\(deeper)) | (present(T)::present(S))")
+    }
+
+    func testRepositoryMenuShowsAndHidesTheSelectedRowsElidedRevisions() async throws {
+        let repo = FocusCaptureRepo(events: [])
+        let viewModel = makeViewModel(repo: repo)
+        viewModel.revsetFilter = RevsetFilterState(revset: "all()", previous: nil, recent: [])
+        let owner = GraphEntry(
+            change: mockChangeInfo(changeId: "S", commitId: "sss", parents: ["hidden"]),
+            edges: [GraphEdge(target: "bbb", edgeType: .indirect)]
+        )
+        viewModel.applyGraphSnapshot(
+            snapshot(entries: [owner, entry(changeId: "B", commitId: "bbb")], isComplete: true),
+            preferredCommitId: "sss",
+            preferredRev: "S"
+        )
+        XCTAssertEqual(viewModel.selectedChangeId, "S")
+        XCTAssertEqual(viewModel.graphMenuEligibility.canShowElidedRevisions, true)
+        XCTAssertEqual(viewModel.graphMenuEligibility.canHideExpandedRevisions, false)
+
+        viewModel.showSelectedElidedRevisions()
+        try await waitUntil("the expanded request starts") { repo.requestCount == 1 }
+        XCTAssertEqual(repo.requests.last?.revset, "(all()) | (present(B)::present(S))")
+        XCTAssertEqual(viewModel.graphMenuEligibility.canHideExpandedRevisions, true)
+
+        viewModel.hideSelectedExpandedRevisions()
+        try await waitUntil("the collapsed request starts") { repo.requestCount == 2 }
+        XCTAssertEqual(repo.requests.last?.revset, "all()")
+    }
+
     private func waitUntil(_ what: String, _ condition: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(10)
         while !condition() {

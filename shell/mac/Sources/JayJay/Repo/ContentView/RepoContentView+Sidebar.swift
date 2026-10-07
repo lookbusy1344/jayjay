@@ -52,6 +52,7 @@ extension RepoContentView {
                 refreshMode: viewModel.refreshMode,
                 loadMoreLabel: viewModel.graphPaused ? "Continue Loading" : "Load More",
                 isFocused: viewModel.focusedRevision != nil,
+                expandedElisionOwners: viewModel.expandedElisionOwners,
                 isInteractionEnabled: !viewModel.isGraphAwaitingReplacement
             )
             .opacity(viewModel.isGraphAwaitingReplacement ? 0.45 : 1)
