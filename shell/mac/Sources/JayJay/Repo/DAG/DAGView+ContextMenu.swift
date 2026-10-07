@@ -108,6 +108,7 @@ extension DAGView {
             Label(Localized.Menu.showAncestorsEllipsis, systemImage: "arrow.triangle.branch")
         }
         commandButton(.showEvolution, change: entry.change, available: available)
+        graphScopeSection(entry: entry, viewModel: viewModel)
 
         identifierCopySection(change: entry.change)
         Menu {
@@ -159,6 +160,35 @@ extension DAGView {
             Button { actions?.updateFromGerrit(rev: rev) } label: {
                 Label(gerritUpdateTitle, systemImage: "icloud.and.arrow.down")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func graphScopeSection(entry: GraphEntry, viewModel: DAGViewModel) -> some View {
+        let revision = entry.change.selectionRevision
+        let elidedTargets = viewModel.elidedTargets(of: entry.change)
+        Divider()
+        Button { actions?.focus(on: revision) } label: {
+            Label(Localized.Menu.hideUnrelatedChanges, systemImage: "scope")
+        }
+        .help(Localized.Menu.showOnlyThisChangesAncestorsAndDescendants)
+        if isFocused {
+            Button { actions?.clearFocus() } label: {
+                Label(Localized.Menu.clearFocus, systemImage: "xmark.circle")
+            }
+        }
+        if !elidedTargets.isEmpty {
+            Button { actions?.expandElisions(owner: revision, targets: elidedTargets) } label: {
+                Label(Localized.Menu.showElidedRevisions, systemImage: "rectangle.expand.vertical")
+            }
+            .keyboardShortcut("l", modifiers: [])
+            .help(Localized.Menu.addTheRevisionsHiddenBelowThisChangeToTheGraph)
+        }
+        if expandedElisionOwners.contains(revision) {
+            Button { actions?.collapseElisions(owner: revision) } label: {
+                Label(Localized.Menu.hideExpandedRevisions, systemImage: "rectangle.compress.vertical")
+            }
+            .keyboardShortcut("l", modifiers: [])
         }
     }
 

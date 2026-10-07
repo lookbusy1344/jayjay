@@ -66,4 +66,11 @@ struct DAGLayout: Sendable {
     func rowIndex(for commitId: String) -> Int? {
         rowIndexByCommitId[commitId]
     }
+
+    /// Revisions the row's elision bands lead to. A target not loaded yet has no row, so its commit id stands in.
+    func elidedTargets(of commitId: String, revision: (String) -> String?) -> [String] {
+        (row(for: commitId)?.elisionsAfter ?? []).map { band in
+            revision(band.targetCommitId) ?? band.targetCommitId
+        }
+    }
 }

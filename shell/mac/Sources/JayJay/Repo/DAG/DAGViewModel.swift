@@ -207,6 +207,10 @@ struct DAGViewModel {
         changeByRevision[changeId]
     }
 
+    func elidedTargets(of change: ChangeInfo) -> [String] {
+        layout.elidedTargets(of: change.commitId.id) { changeByRevision[$0]?.selectionRevision }
+    }
+
     func bookmarkDiffRequest(from selectedId: String, to target: ChangeInfo) -> BookmarkDiffRequest? {
         guard let selectedChange = change(for: selectedId) else { return nil }
         return JayJayCore.bookmarkDiffRequest(base: selectedChange, head: target)
