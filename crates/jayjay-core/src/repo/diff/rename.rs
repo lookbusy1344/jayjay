@@ -1,133 +1,60 @@
-use std::collections::HashSet;
-use std::path::Path;
+use jj_lib::backend::MergedTreeValue;
+use jj_lib::copies::{CopiesTreeDiffEntry, CopyOperation};
+use jj_lib::merge::{Diff, Merge};
+use jj_lib::repo_path::RepoPathBuf;
 
+use super::entry::resolve_diff_values;
 use crate::types::*;
 use jayjay_primitives::hex_sha256;
 
-pub(super) fn detect_renames(hunks: &mut Vec<DiffHunk>) {
-    let removed_indices: Vec<usize> = hunks
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| h.hunk_type == HunkType::Removed)
-        .map(|(i, _)| i)
-        .collect();
-    let added_indices: Vec<usize> = hunks
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| h.hunk_type == HunkType::Added)
-        .map(|(i, _)| i)
-        .collect();
+/// A copy-aware tree-diff entry reduced to the per-path diffs jayjay builds hunks from.
+pub(super) enum CopyEntry {
+    Path(RepoPathBuf, Diff<MergedTreeValue>),
+    /// Each side carries one present value, so it builds as an ordinary removal and addition before `rename_hunk` joins them.
+    Rename {
+        source: (RepoPathBuf, Diff<MergedTreeValue>),
+        target: (RepoPathBuf, Diff<MergedTreeValue>),
+    },
+}
 
-    let mut matched_removed = Vec::new();
-    let mut matched_added = Vec::new();
-
-    for &removed_index in &removed_indices {
-        let mut best_match: Option<(usize, f64)> = None;
-
-        for &added_index in &added_indices {
-            if matched_added.contains(&added_index) {
-                continue;
+impl CopyEntry {
+    pub(super) fn from_jj(entry: CopiesTreeDiffEntry) -> JayResult<Self> {
+        let CopiesTreeDiffEntry { path, values } = entry;
+        let values = resolve_diff_values(&path.target, values)?;
+        Ok(match path.source {
+            None => Self::Path(path.target, values),
+            // HunkType has no copy variant; the copy's source is unchanged, so the target reads as an addition.
+            Some((_, CopyOperation::Copy)) => {
+                Self::Path(path.target, Diff::new(Merge::absent(), values.after))
             }
-            let score = rename_score(&hunks[removed_index], &hunks[added_index]);
-            if score > 0.5 && !best_match.is_some_and(|(_, best_score)| score <= best_score) {
-                best_match = Some((added_index, score));
-            }
-        }
-
-        if let Some((added_index, _score)) = best_match {
-            let old_path = hunks[removed_index].path.clone();
-            let removed_preview = hunks[removed_index].old.preview.clone();
-            // Combine both sides so removed-side changes also invalidate the mark.
-            let combined_identity = hex_sha256(
-                format!(
-                    "rename|{}|{}",
-                    hunks[removed_index].review_identity, hunks[added_index].review_identity
-                )
-                .as_bytes(),
-            );
-            // Only a byte-equal pair is a pure rename; set-similarity scores 1.0 for reordered or duplicate-only content, so never clear contents on score alone.
-            let byte_equal = hunks[removed_index].old.content == hunks[added_index].new.content;
-
-            hunks[added_index].old_path = Some(old_path);
-            hunks[added_index].hunk_type = HunkType::Renamed;
-            hunks[added_index].old.preview = removed_preview;
-            hunks[added_index].review_identity = combined_identity;
-
-            if byte_equal {
-                hunks[added_index].old.content = None;
-                hunks[added_index].new.content = None;
-            } else {
-                hunks[added_index].old.content = hunks[removed_index].old.content.clone();
-            }
-
-            matched_removed.push(removed_index);
-            matched_added.push(added_index);
-        }
-    }
-
-    matched_removed.sort_unstable();
-    for &index in matched_removed.iter().rev() {
-        hunks.remove(index);
+            Some((source, CopyOperation::Rename)) => Self::Rename {
+                source: (source, Diff::new(values.before, Merge::absent())),
+                target: (path.target, Diff::new(Merge::absent(), values.after)),
+            },
+        })
     }
 }
 
-fn rename_score(removed: &DiffHunk, added: &DiffHunk) -> f64 {
-    let old_path = Path::new(&removed.path);
-    let new_path = Path::new(&added.path);
-    let old_name = old_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let new_name = new_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    let old_content = removed.old.content.as_deref().unwrap_or("");
-    let new_content = added.new.content.as_deref().unwrap_or("");
-    let has_content = !old_content.is_empty() || !new_content.is_empty();
-
-    if has_content && old_content == new_content {
-        return 1.0;
-    }
-
-    if !old_name.is_empty() && old_name.eq_ignore_ascii_case(new_name) {
-        // Filename alone is a strong signal; content only refines the score.
-        let content_sim = if has_content {
-            content_similarity(old_content, new_content)
-        } else {
-            0.0
-        };
-        return 0.6 + content_sim * 0.4;
-    }
-
-    // Extension-only match requires real content — empty strings aren't evidence.
-    if !has_content {
-        return 0.0;
-    }
-
-    let old_ext = old_path.extension().and_then(|e| e.to_str());
-    let new_ext = new_path.extension().and_then(|e| e.to_str());
-    if old_ext == new_ext && old_ext.is_some() {
-        let similarity = content_similarity(old_content, new_content);
-        if similarity > 0.7 {
-            return similarity;
-        }
-    }
-
-    0.0
-}
-
-fn content_similarity(a: &str, b: &str) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
-    }
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-    let a_lines: HashSet<&str> = a.lines().collect();
-    let b_lines: HashSet<&str> = b.lines().collect();
-    let intersection = a_lines.intersection(&b_lines).count();
-    let union = a_lines.union(&b_lines).count();
-    if union == 0 {
-        0.0
+/// Joins the source's removal and the target's addition into one renamed hunk.
+pub(super) fn rename_hunk(removed: DiffHunk, mut added: DiffHunk) -> DiffHunk {
+    // Combine both sides so removed-side changes also invalidate the mark.
+    added.review_identity = hex_sha256(
+        format!(
+            "rename|{}|{}",
+            removed.review_identity, added.review_identity
+        )
+        .as_bytes(),
+    );
+    if removed.old.content == added.new.content {
+        added.old.content = None;
+        added.new.content = None;
     } else {
-        intersection as f64 / union as f64
+        added.old.content = removed.old.content;
     }
+    added.old.preview = removed.old.preview;
+    added.old_path = Some(removed.path);
+    added.hunk_type = HunkType::Renamed;
+    added
 }
 
 #[cfg(test)]
@@ -159,190 +86,52 @@ mod tests {
     }
 
     #[test]
-    fn content_similarity_identical() {
-        assert_eq!(content_similarity("a\nb\n", "a\nb\n"), 1.0);
-        assert_eq!(content_similarity("", ""), 1.0);
-    }
-
-    #[test]
-    fn content_similarity_disjoint() {
-        assert_eq!(content_similarity("a\n", "z\n"), 0.0);
-    }
-
-    #[test]
-    fn rename_with_reordered_content_keeps_diff() {
-        // Regression: same-basename rename whose lines are reordered scores 1.0 via set-similarity, but the contents are NOT byte-equal, so the diff must survive.
-        let mut hunks = vec![
-            hunk("a/x.rs", HunkType::Removed, Some("a\nb\nc\n"), None),
-            hunk("b/x.rs", HunkType::Added, None, Some("c\nb\na\n")),
-        ];
-        detect_renames(&mut hunks);
-        assert_eq!(hunks.len(), 1);
-        assert_eq!(hunks[0].hunk_type, HunkType::Renamed);
-        assert_eq!(
-            hunks[0].old.content.as_deref(),
-            Some("a\nb\nc\n"),
-            "reordered rename must keep the before content"
+    fn byte_equal_rename_clears_both_sides() {
+        let renamed = rename_hunk(
+            hunk("old.rs", HunkType::Removed, Some("body\n"), None),
+            hunk("new.rs", HunkType::Added, None, Some("body\n")),
         );
-        assert_eq!(
-            hunks[0].new.content.as_deref(),
-            Some("c\nb\na\n"),
-            "reordered rename must keep the after content"
-        );
+        assert_eq!(renamed.hunk_type, HunkType::Renamed);
+        assert_eq!(renamed.path, "new.rs");
+        assert_eq!(renamed.old_path.as_deref(), Some("old.rs"));
+        assert!(renamed.is_content_free_rename());
     }
 
     #[test]
-    fn rename_with_duplicate_only_change_keeps_diff() {
-        // Removing one of two identical lines is set-equal (score 1.0) but not byte-equal.
-        let mut hunks = vec![
-            hunk("a/y.rs", HunkType::Removed, Some("x\nx\ny\n"), None),
-            hunk("b/y.rs", HunkType::Added, None, Some("x\ny\n")),
-        ];
-        detect_renames(&mut hunks);
-        assert_eq!(hunks.len(), 1);
-        assert_eq!(hunks[0].hunk_type, HunkType::Renamed);
-        assert_eq!(hunks[0].new.content.as_deref(), Some("x\ny\n"));
-    }
-
-    #[test]
-    fn rename_review_identity_combines_both_sides() {
-        let mut hunks = vec![
-            hunk_with_identity("old.rs", HunkType::Removed, Some("body"), None, "id-old-v1"),
-            hunk_with_identity("new.rs", HunkType::Added, None, Some("body"), "id-new"),
-        ];
-        detect_renames(&mut hunks);
-        assert_eq!(hunks.len(), 1);
-        assert_eq!(hunks[0].hunk_type, HunkType::Renamed);
-        assert_eq!(hunks[0].path, "new.rs");
-        assert_eq!(hunks[0].old_path.as_deref(), Some("old.rs"));
-        let renamed_v1 = hunks[0].review_identity.clone();
-
-        let mut hunks_v2 = vec![
-            hunk_with_identity("old.rs", HunkType::Removed, Some("body"), None, "id-old-v2"),
-            hunk_with_identity("new.rs", HunkType::Added, None, Some("body"), "id-new"),
-        ];
-        detect_renames(&mut hunks_v2);
-        let renamed_v2 = hunks_v2[0].review_identity.clone();
-
-        assert_ne!(renamed_v1, renamed_v2);
-        assert_ne!(renamed_v1, "id-new");
-    }
-
-    #[test]
-    fn no_rename_different_names_empty_content() {
-        // Regression: different basenames with empty content must not match on extension alone.
-        let mut hunks = vec![
-            hunk("PLAN.md", HunkType::Removed, None, None),
-            hunk("Roadmap.md", HunkType::Added, None, None),
-        ];
-        detect_renames(&mut hunks);
-        assert_eq!(hunks.len(), 2);
-    }
-
-    #[test]
-    fn batch_move_without_content_pairs_by_filename_only() {
-        let mut hunks = vec![
-            hunk("pkg/DiffColors.swift", HunkType::Added, None, None),
-            hunk("pkg/ImageDiffView.swift", HunkType::Added, None, None),
-            hunk("pkg/NativeDiffView.swift", HunkType::Added, None, None),
-            hunk(
-                "pkg/SideBySideDiffRows.swift",
-                HunkType::Removed,
-                None,
-                None,
-            ),
-            hunk("app/DiffColors.swift", HunkType::Removed, None, None),
-            hunk("app/ImageDiffView.swift", HunkType::Removed, None, None),
-            hunk("app/NativeDiffView.swift", HunkType::Removed, None, None),
-        ];
-        detect_renames(&mut hunks);
-
-        // 3 renames + 1 unpaired deletion = 4 entries.
-        assert_eq!(hunks.len(), 4);
-
-        let rename_pairs: Vec<(&str, Option<&str>)> = hunks
-            .iter()
-            .filter(|h| h.hunk_type == HunkType::Renamed)
-            .map(|h| (h.path.as_str(), h.old_path.as_deref()))
-            .collect();
-        assert_eq!(rename_pairs.len(), 3);
-        assert!(rename_pairs.contains(&("pkg/DiffColors.swift", Some("app/DiffColors.swift"))));
-        assert!(
-            rename_pairs.contains(&("pkg/ImageDiffView.swift", Some("app/ImageDiffView.swift")))
-        );
-        assert!(
-            rename_pairs.contains(&("pkg/NativeDiffView.swift", Some("app/NativeDiffView.swift")))
-        );
-
-        let orphaned_delete = hunks
-            .iter()
-            .find(|h| h.hunk_type == HunkType::Removed)
-            .expect("SideBySideDiffRows should remain as a pure deletion");
-        assert_eq!(orphaned_delete.path, "pkg/SideBySideDiffRows.swift");
-    }
-
-    #[test]
-    fn no_rename_across_different_extensions() {
-        for (old, new) in [
-            (None, None),
-            (Some("a\nb\nc\nd\ne\n"), Some("a\nb\nc\nd\ne\nf\n")),
-        ] {
-            let mut hunks = vec![
-                hunk("old.rs", HunkType::Removed, old, None),
-                hunk("new.py", HunkType::Added, None, new),
-            ];
-            detect_renames(&mut hunks);
-            assert_eq!(hunks.len(), 2, "different extensions should not match");
+    fn rename_with_changed_bytes_keeps_both_sides() {
+        // Reordered lines and a dropped duplicate are line-set equal but not byte-equal, so the diff must survive.
+        for (old, new) in [("a\nb\nc\n", "c\nb\na\n"), ("x\nx\ny\n", "x\ny\n")] {
+            let renamed = rename_hunk(
+                hunk("a/x.rs", HunkType::Removed, Some(old), None),
+                hunk("b/x.rs", HunkType::Added, None, Some(new)),
+            );
+            assert_eq!(renamed.old.content.as_deref(), Some(old));
+            assert_eq!(renamed.new.content.as_deref(), Some(new));
         }
     }
 
     #[test]
-    fn extension_match_pairs_the_most_similar_file_above_the_threshold() {
-        // `shared` common lines plus one line only the removed side has, and `extra` lines only the added side has.
-        let pair = |shared: usize, extra: &[&str]| {
-            let common: Vec<String> = (1..=shared).map(|n| format!("line {n}")).collect();
-            let old = [common.as_slice(), &["removed only".to_owned()]]
-                .concat()
-                .join("\n");
-            let new = common
-                .iter()
-                .map(String::as_str)
-                .chain(extra.iter().copied())
-                .collect::<Vec<_>>()
-                .join("\n");
-            (old, new)
+    fn rename_review_identity_combines_both_sides() {
+        let rename = |old_identity| {
+            rename_hunk(
+                hunk_with_identity(
+                    "old.rs",
+                    HunkType::Removed,
+                    Some("body"),
+                    None,
+                    old_identity,
+                ),
+                hunk_with_identity("new.rs", HunkType::Added, None, Some("body"), "id-new"),
+            )
+            .review_identity
         };
-        let (old, far) = pair(14, &["x", "y"]);
-        let (_, near) = pair(14, &["x"]);
-        let mut hunks = vec![
-            hunk("old.txt", HunkType::Removed, Some(&old), None),
-            hunk("far.txt", HunkType::Added, None, Some(&far)),
-            hunk("near.txt", HunkType::Added, None, Some(&near)),
-        ];
-        detect_renames(&mut hunks);
-        let renamed: Vec<_> = hunks
-            .iter()
-            .filter(|hunk| hunk.hunk_type == HunkType::Renamed)
-            .map(|hunk| hunk.path.as_str())
-            .collect();
-        assert_eq!(renamed, ["near.txt"]);
-
-        let (old, new) = pair(7, &["x", "y"]);
-        let mut at_threshold = vec![
-            hunk("old.txt", HunkType::Removed, Some(&old), None),
-            hunk("new.txt", HunkType::Added, None, Some(&new)),
-        ];
-        detect_renames(&mut at_threshold);
-        assert_eq!(
-            at_threshold.len(),
-            2,
-            "7 of 10 distinct lines shared is not a rename"
-        );
+        let renamed_v1 = rename("id-old-v1");
+        assert_ne!(renamed_v1, rename("id-old-v2"));
+        assert_ne!(renamed_v1, "id-new");
     }
 
     #[test]
     fn rename_carries_old_preview_from_removed_hunk() {
-        // Regression: the renamed hunk's Before pane was always empty because detect_renames copied old_content but forgot old_preview.
         let mut removed = hunk(
             "old/icon.png",
             HunkType::Removed,
@@ -359,19 +148,14 @@ mod tests {
             Some("<image (100 bytes)>"),
         );
 
-        let mut hunks = vec![removed, added];
-        detect_renames(&mut hunks);
+        let renamed = rename_hunk(removed, added);
 
-        assert_eq!(hunks.len(), 1);
-        assert_eq!(hunks[0].hunk_type, HunkType::Renamed);
-        assert_eq!(hunks[0].old_path.as_deref(), Some("old/icon.png"));
-        assert!(hunks[0].old.content.is_none());
-        assert!(hunks[0].new.content.is_none());
-
-        let Some(DiffPreview::Image { path }) = hunks[0].old.preview.as_ref() else {
+        assert!(renamed.old.content.is_none());
+        assert!(renamed.new.content.is_none());
+        let Some(DiffPreview::Image { path }) = renamed.old.preview.as_ref() else {
             panic!(
                 "renamed hunk should carry the removed side's preview, got {:?}",
-                hunks[0].old.preview
+                renamed.old.preview
             );
         };
         assert_eq!(path, "/tmp/jayjay-images/abc123.png");

@@ -31,10 +31,11 @@ fn diff_stats_totals_the_per_file_counts() {
 }
 
 #[test]
-fn diff_file_stats_pairs_same_basename_moves_like_the_card_list() {
+fn diff_file_stats_pairs_moves_like_the_card_list() {
     let temp_dir = init_jj_repo();
     let repo_path = temp_dir.path().join("repo");
-    run_jj_in(&repo_path, &["new", "-m", "move hello"]);
+    fs::write(repo_path.join("notes.txt"), "first note\nsecond note\n").expect("write notes.txt");
+    run_jj_in(&repo_path, &["new", "-m", "move files"]);
     let repo = Repo::open(&repo_path).expect("open repo");
 
     fs::create_dir(repo_path.join("moved")).expect("create dir");
@@ -43,38 +44,23 @@ fn diff_file_stats_pairs_same_basename_moves_like_the_card_list() {
         repo_path.join("moved/hello.txt"),
     )
     .expect("move hello.txt");
+    fs::rename(repo_path.join("notes.txt"), repo_path.join("memo.txt")).expect("rename notes.txt");
     repo.refresh_working_copy().expect("snapshot working copy");
 
-    let stats = repo.diff_file_stats("@", false).expect("diff file stats");
-    assert_eq!(stats.len(), 1, "same-basename move pairs: {stats:?}");
-    assert_eq!(stats[0].path, "moved/hello.txt");
-    assert_eq!((stats[0].insertions, stats[0].deletions), (0, 0));
-}
-
-#[test]
-fn diff_file_stats_keeps_cross_basename_renames_as_two_entries() {
-    // diff_file_list pairs renames without content, so the cards show a deletion and an addition; stats must describe those cards, not a content-aware merge.
-    let temp_dir = init_jj_repo();
-    let repo_path = temp_dir.path().join("repo");
-    run_jj_in(&repo_path, &["new", "-m", "rename hello"]);
-    let repo = Repo::open(&repo_path).expect("open repo");
-
-    fs::rename(repo_path.join("hello.txt"), repo_path.join("greeting.txt"))
-        .expect("rename hello.txt");
-    repo.refresh_working_copy().expect("snapshot working copy");
-
-    let stats = repo.diff_file_stats("@", false).expect("diff file stats");
-    assert_eq!(stats.len(), 2, "cards stay split: {stats:?}");
-    let removed = stats
+    let mut counts: Vec<_> = repo
+        .diff_file_stats("@", false)
+        .expect("diff file stats")
         .iter()
-        .find(|s| s.path == "hello.txt")
-        .expect("removed entry");
-    let added = stats
-        .iter()
-        .find(|s| s.path == "greeting.txt")
-        .expect("added entry");
-    assert_eq!((removed.insertions, removed.deletions), (0, 1));
-    assert_eq!((added.insertions, added.deletions), (1, 0));
+        .map(|file| (file.path.clone(), file.insertions, file.deletions))
+        .collect();
+    counts.sort_unstable();
+    assert_eq!(
+        counts,
+        [
+            ("memo.txt".to_owned(), 0, 0),
+            ("moved/hello.txt".to_owned(), 0, 0)
+        ]
+    );
 }
 
 #[cfg(unix)]

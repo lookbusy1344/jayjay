@@ -23,6 +23,7 @@ mod pull_request_import_live;
 mod pull_requests;
 mod rebase_modes;
 mod remote_operations;
+mod rename_detection;
 mod repo;
 mod restore_files;
 mod review_identity;

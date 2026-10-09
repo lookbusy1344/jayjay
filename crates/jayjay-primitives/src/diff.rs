@@ -14,7 +14,7 @@ pub struct DiffHunk {
 }
 
 impl DiffHunk {
-    /// A byte-identical rename: `detect_renames` cleared both sides because the content is unchanged, so there is nothing to diff and loading by the new path alone would render every line as added.
+    /// A byte-identical rename: `rename_hunk` cleared both sides because the content is unchanged, so there is nothing to diff and loading by the new path alone would render every line as added.
     pub fn is_content_free_rename(&self) -> bool {
         self.hunk_type == HunkType::Renamed && self.old.is_empty() && self.new.is_empty()
     }
