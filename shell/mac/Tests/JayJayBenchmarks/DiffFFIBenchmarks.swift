@@ -15,6 +15,8 @@ final class DiffFFIBenchmarks: XCTestCase {
     private static let sbsWidths: [UInt32] = Array(stride(from: 40, through: 85, by: 15))
     private static let expansionBasis = "bench"
     private static let noMovedLabelCols: UInt32 = 0
+    /// Share of the loaded cache's malloc bytes that may stay in use after its entries are evicted (`Risks: Handle lifetime` in the plan).
+    private static let releasedTolerance = 0.1
 
     private static let repo: JayJayRepo = {
         guard let repo = try? JayJayRepo.open(path: fixturePath) else {
@@ -109,6 +111,40 @@ final class DiffFFIBenchmarks: XCTestCase {
         }
     }
 
+    /// Evicted and cleared cache entries release their Rust `LoadedDiff`, so malloc bytes fall back to the level before loading.
+    func testEvictionReleasesLoadedDiffs() async throws {
+        let scenario = "many"
+        let hunks = try hunks(scenario)
+        // Loading every file once first keeps the repository's object caches and lazily built statics, such as syntax tables, out of the deltas.
+        for hunk in hunks {
+            _ = try await Self.load(hunk, scenario)
+        }
+        let before = MemorySample()
+
+        let unbounded = DiffCache()
+        for hunk in hunks {
+            try await unbounded.set(hunk.path, value: Self.load(hunk, scenario))
+        }
+        let loaded = MemorySample().delta(from: before)
+        await unbounded.clear()
+        let cleared = MemorySample().delta(from: before)
+
+        // A one-byte budget keeps only the most recent entry.
+        let bounded = DiffCache(budgetBytes: 1)
+        for hunk in hunks {
+            try await bounded.set(hunk.path, value: Self.load(hunk, scenario))
+        }
+        let evicted = MemorySample().delta(from: before)
+        withExtendedLifetime(bounded) {}
+
+        try record(["cache_loaded", scenario, "-", "1"], loaded)
+        try record(["cache_cleared", scenario, "-", "1"], cleared)
+        try record(["cache_evicted", scenario, "-", "1"], evicted)
+        let limit = Int(Double(loaded.bytes) * Self.releasedTolerance)
+        XCTAssertLessThan(cleared.bytes, limit, "clear kept \(cleared.bytes) of \(loaded.bytes) bytes")
+        XCTAssertLessThan(evicted.bytes, limit, "eviction kept \(evicted.bytes) of \(loaded.bytes) bytes")
+    }
+
     // MARK: - Harness
 
     private static func rev(_ scenario: String) -> String {
@@ -145,14 +181,16 @@ final class DiffFFIBenchmarks: XCTestCase {
             withExtendedLifetime(result) {}
         }
         let median = times.sorted()[times.count / 2] / iterations
-        let line = [
-            name, scenario,
-            String(format: "%.1f", median.milliseconds),
-            String(times.count),
+        try record([name, scenario, String(format: "%.1f", median.milliseconds), String(times.count)], retained)
+    }
+
+    /// Appends one results row: the leading columns, then retained memory.
+    private func record(_ columns: [String], _ retained: MemoryDelta) throws {
+        let line = (columns + [
             String(format: "%.2f", retained.mebibytes),
             String(retained.blocks),
             String(format: "%.2f", retained.footprintMebibytes)
-        ].joined(separator: "\t")
+        ]).joined(separator: "\t")
         print("FFIBENCH\t\(line)")
         if let handle = FileHandle(forWritingAtPath: Self.resultsPath) {
             handle.seekToEndOfFile()
