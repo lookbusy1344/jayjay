@@ -3,8 +3,7 @@ use jayjay_core::diff::{
     ChangeGroup, CollapsedDiff, ConflictBlock, ConflictBlockSection, ConflictLineKind,
     ContextExpansion, ContextExpansionRequest, ContextExpansionReveal, ContextRegion,
     DiffDisplayItem, DiffLine, DiffSide, DiffSpan, DiffSpanStyle, DisplayLineMapping, FileDiff,
-    LineSpan, MovedRow, RowSide, SbsVisualLine, SideBySideRow, Utf16Range, WrappedDiffLine,
-    WrappedSbsRow, WrappedSide,
+    LineSpan, MovedRow, RowSide, SideBySideRow, WrappedDiffLine, WrappedSbsRow, WrappedSide,
 };
 use jayjay_core::diff_edit::{DiffEditFile, DiffEditFileDiff};
 use jayjay_core::syntax::SyntaxToken;
@@ -13,20 +12,6 @@ use jayjay_core::{
     DiffLoadRequest, DiffPreview, DiffProjection, DiffProjectionMode, DiffRenderKind, DiffStats,
     DisplayRows, FileDiffStats, HunkType,
 };
-
-#[uniffi::remote(Record)]
-pub struct Utf16Range {
-    pub start: u32,
-    pub end: u32,
-}
-
-#[uniffi::remote(Record)]
-pub struct SbsVisualLine {
-    pub row_ix: u32,
-    pub old: core::diff::Utf16Range,
-    pub new: core::diff::Utf16Range,
-    pub full_width_source: Option<core::diff::DiffSide>,
-}
 
 #[uniffi::remote(Record)]
 pub struct DisplayRows {

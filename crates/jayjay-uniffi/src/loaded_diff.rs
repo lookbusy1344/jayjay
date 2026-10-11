@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use jayjay_core::diff::{ReviewDisplayParts, SbsVisualLine, SideBySideRow};
+use jayjay_core::diff::{ReviewDisplayParts, SideBySideRow};
 use jayjay_core::{DiffHunk, DisplayRows, LoadedDiff as CoreLoadedDiff};
+
+use crate::packed_layout::pack_sbs_layout;
 
 #[derive(uniffi::Object)]
 pub struct LoadedDiff(pub(crate) CoreLoadedDiff);
@@ -38,14 +40,18 @@ impl LoadedDiff {
         self.0.side_by_side_rows()
     }
 
-    fn side_by_side_layout(
+    /// The side-by-side layout at these pane widths, packed by `pack_sbs_layout`.
+    fn packed_side_by_side_layout(
         &self,
         old_cols: u32,
         new_cols: u32,
         moved_label_cols: u32,
-    ) -> Vec<SbsVisualLine> {
-        self.0
-            .side_by_side_layout(old_cols, new_cols, moved_label_cols)
+    ) -> Vec<u8> {
+        pack_sbs_layout(
+            &self
+                .0
+                .side_by_side_layout(old_cols, new_cols, moved_label_cols),
+        )
     }
 
     fn flags(&self) -> LoadedDiffFlags {

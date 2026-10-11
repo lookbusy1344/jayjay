@@ -114,7 +114,7 @@ impl LoadedDiff {
         build_side_by_side_rows(&self.diff.unpack().lines)
     }
 
-    /// Visual lines of `side_by_side_rows` wrapped to the pane widths, with `moved_label_cols` reserved on each moved block's first row.
+    /// Visual lines of the `side_by_side_rows` that wrap at the pane widths or span both panes, with `moved_label_cols` reserved on each moved block's first row.
     pub fn side_by_side_layout(
         &self,
         old_cols: u32,

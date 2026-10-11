@@ -1,10 +1,10 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::chunks::grapheme_cells;
-use super::side_by_side::{full_width_source, wrap_sbs_rows};
-use super::types::WrappedSide;
+use super::chunks::{SpanChunk, grapheme_cells, side_extents};
+use super::cols::cols_for;
+use super::side_by_side::full_width_source;
 use crate::side_by_side::{RowSide, SideBySideRow};
-use crate::types::DiffSide;
+use crate::types::{DiffSide, DiffSpanStyle};
 
 /// UTF-16 code-unit range `[start, end)` into one side's row text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,45 +23,83 @@ pub struct SbsVisualLine {
     pub full_width_source: Option<DiffSide>,
 }
 
-/// The geometry of `wrap_sbs_rows`, in UTF-16 offsets.
+/// The geometry of `wrap_sbs_rows` in UTF-16 offsets, for rows that wrap or span full width; any other row is one visual line holding the whole row. Both walk the same chunker, and this one builds no text.
 pub fn wrap_sbs_layout(
     rows: &[SideBySideRow],
     old_cols: u32,
     new_cols: u32,
     moved_label_cols: u32,
 ) -> Vec<SbsVisualLine> {
-    let wrapped = wrap_sbs_rows(rows, old_cols, new_cols, moved_label_cols);
-    let mut offsets: Option<(u32, CellOffsets, CellOffsets)> = None;
-    wrapped
-        .iter()
-        .map(|line| {
-            let row = &rows[line.row_ix as usize];
-            let source = row.full_width.then(|| full_width_source(row));
-            if offsets
-                .as_ref()
-                .is_none_or(|(row_ix, _, _)| *row_ix != line.row_ix)
-            {
-                let (old, new) = match source {
-                    Some(side) => (side_of(row, side), side_of(row, side)),
-                    None => (&row.old, &row.new),
-                };
-                offsets = Some((line.row_ix, CellOffsets::of(old), CellOffsets::of(new)));
-            }
-            let (_, old, new) = offsets.as_ref().expect("offsets for the current row");
-            SbsVisualLine {
-                row_ix: line.row_ix,
-                old: old.range(&line.old),
-                new: new.range(&line.new),
-                full_width_source: source,
-            }
-        })
-        .collect()
+    let old_cols = old_cols.max(1) as usize;
+    let new_cols = new_cols.max(1) as usize;
+    let label_cols = moved_label_cols as usize;
+    let mut layout = Vec::new();
+    for (row_ix, row) in rows.iter().enumerate() {
+        let row_ix = row_ix as u32;
+        if row.old.style == DiffSpanStyle::Separator {
+            continue;
+        }
+        if row.full_width {
+            push_full_width(row_ix, row, old_cols, new_cols, &mut layout);
+            continue;
+        }
+        let old = side_extents(
+            &row.old.spans,
+            cols_for(row.old.moved, old_cols, label_cols),
+            old_cols,
+        );
+        let new = side_extents(
+            &row.new.spans,
+            cols_for(row.new.moved, new_cols, label_cols),
+            new_cols,
+        );
+        let count = old.len().max(new.len());
+        if count > 1 {
+            layout.extend((0..count).map(|ix| SbsVisualLine {
+                row_ix,
+                old: old.get(ix).map(chunk_range).unwrap_or_default(),
+                new: new.get(ix).map(chunk_range).unwrap_or_default(),
+                full_width_source: None,
+            }));
+        }
+    }
+    layout
 }
 
-fn side_of(row: &SideBySideRow, side: DiffSide) -> &RowSide {
-    match side {
+/// A full-width row wraps at both panes' width, then splits each line at the old pane's width; a glyph straddling the split stays on the old side.
+fn push_full_width(
+    row_ix: u32,
+    row: &SideBySideRow,
+    old_cols: usize,
+    new_cols: usize,
+    layout: &mut Vec<SbsVisualLine>,
+) {
+    let side = full_width_source(row);
+    let source = match side {
         DiffSide::Old => &row.old,
         DiffSide::New => &row.new,
+    };
+    let offsets = CellOffsets::of(source);
+    let width = old_cols.saturating_add(new_cols);
+    for chunk in side_extents(&source.spans, width, width) {
+        let split = offsets.offset(chunk.start.saturating_add(old_cols).min(chunk.end));
+        layout.push(SbsVisualLine {
+            row_ix,
+            old: utf16_range(chunk.utf16_start, split),
+            new: utf16_range(split, chunk.utf16_end),
+            full_width_source: Some(side),
+        });
+    }
+}
+
+fn chunk_range(chunk: &SpanChunk) -> Utf16Range {
+    utf16_range(chunk.utf16_start, chunk.utf16_end)
+}
+
+fn utf16_range(start: usize, end: usize) -> Utf16Range {
+    Utf16Range {
+        start: start as u32,
+        end: end as u32,
     }
 }
 
@@ -94,12 +132,5 @@ impl CellOffsets {
         self.clusters
             .get(ix)
             .map_or(self.utf16_len, |&(_, units)| units)
-    }
-
-    fn range(&self, side: &WrappedSide) -> Utf16Range {
-        Utf16Range {
-            start: self.offset(side.col_start as usize) as u32,
-            end: self.offset(side.col_end as usize) as u32,
-        }
     }
 }

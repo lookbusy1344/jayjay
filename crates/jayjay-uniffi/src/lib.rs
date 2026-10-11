@@ -25,6 +25,7 @@ mod markdown;
 #[cfg(feature = "desktop")]
 mod merge_scroll;
 mod network;
+mod packed_layout;
 mod palette;
 mod placeholder;
 #[cfg(feature = "desktop")]
@@ -49,6 +50,7 @@ pub use fuzzy::*;
 pub use loaded_diff::*;
 pub use markdown::*;
 pub use network::*;
+pub use packed_layout::pack_sbs_layout;
 pub use palette::*;
 pub use placeholder::*;
 #[cfg(feature = "desktop")]
