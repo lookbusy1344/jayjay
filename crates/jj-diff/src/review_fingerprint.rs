@@ -61,6 +61,24 @@ pub struct ReviewDisplayParts {
     pub group_map: Vec<Vec<u32>>,
 }
 
+impl ReviewDisplayParts {
+    /// Digest text and group-map entries, with each fingerprint's and map row's own size.
+    pub fn retained_bytes(&self) -> usize {
+        let fingerprints: usize = self
+            .snapshot
+            .fingerprints
+            .iter()
+            .map(|fingerprint| size_of::<ReviewGroupFingerprint>() + fingerprint.digest.len())
+            .sum();
+        let group_map: usize = self
+            .group_map
+            .iter()
+            .map(|canonical| size_of::<Vec<u32>>() + canonical.len() * size_of::<u32>())
+            .sum();
+        fingerprints + group_map
+    }
+}
+
 /// Snapshot and group map from one canonical diff; `display_lines` are the rendered rows of the same text pair.
 pub fn review_display_parts(
     old: &str,

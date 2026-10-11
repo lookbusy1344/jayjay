@@ -32,6 +32,15 @@ final class DiffStore {
         var projection: DiffProjection? {
             content.projection
         }
+
+        /// Rust's copy of the diff plus the texts and review state held here.
+        var retainedBytes: Int {
+            let review = review.map { review in
+                review.snapshot.fingerprints.reduce(0) { $0 + $1.digest.utf8.count }
+                    + review.groupMap.reduce(0) { $0 + $1.count * MemoryLayout<UInt32>.size }
+            } ?? 0
+            return Int(loaded.retainedBytes()) + oldContent.utf8.count + newContent.utf8.count + review
+        }
     }
 
     struct CacheKeyParts {
@@ -190,12 +199,12 @@ actor DiffCache {
 
     func set(_ key: String, value: DiffStore.CachedDiff) {
         if let existing = entries[key] {
-            totalBytes -= bytes(existing)
+            totalBytes -= existing.retainedBytes
             order.removeAll { $0 == key }
         }
         entries[key] = value
         order.append(key)
-        totalBytes += bytes(value)
+        totalBytes += value.retainedBytes
         evict()
     }
 
@@ -215,13 +224,8 @@ actor DiffCache {
         while totalBytes > budgetBytes, order.count > 1, let oldest = order.first {
             order.removeFirst()
             if let removed = entries.removeValue(forKey: oldest) {
-                totalBytes -= bytes(removed)
+                totalBytes -= removed.retainedBytes
             }
         }
-    }
-
-    /// Rust's copy of the diff plus the texts held here.
-    private func bytes(_ diff: DiffStore.CachedDiff) -> Int {
-        Int(diff.loaded.retainedBytes()) + diff.content.oldText.utf8.count + diff.content.newText.utf8.count
     }
 }

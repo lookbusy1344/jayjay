@@ -106,6 +106,23 @@ final class DiffCacheTests: XCTestCase {
         XCTAssertNotNil(kept)
     }
 
+    func testBudgetCountsTheReviewStateCopiedIntoSwift() async {
+        let first = entry(newText: "a\n")
+        let second = entry(newText: "b\n")
+        // Each added file is one change group, so each carries one fingerprint lifted into Swift.
+        XCTAssertEqual(first.review?.snapshot.fingerprints.count, 1)
+        // The budget fits both entries exactly by Rust's count plus their two-byte texts; their Swift review copies push it over.
+        let budget = Int(first.loaded.retainedBytes()) + 2 + Int(second.loaded.retainedBytes()) + 2
+        let cache = DiffCache(budgetBytes: budget)
+        await cache.set("first", value: first)
+        await cache.set("second", value: second)
+
+        let evicted = await cache.get("first")
+        let kept = await cache.get("second")
+        XCTAssertNil(evicted)
+        XCTAssertNotNil(kept)
+    }
+
     func testKeepsSingleEntryLargerThanBudget() async {
         let cache = DiffCache(budgetBytes: 100)
         await cache.set("big", value: entry(bytes: 500))

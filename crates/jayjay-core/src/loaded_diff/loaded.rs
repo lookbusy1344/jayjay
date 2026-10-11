@@ -145,9 +145,13 @@ impl LoadedDiff {
         has(DiffSpanStyle::Added) && has(DiffSpanStyle::Removed) && !self.has_conflicts()
     }
 
-    /// Text bytes plus the packed diff.
+    /// Text bytes, the packed diff and the review state.
     pub fn retained_bytes(&self) -> u64 {
         let text = |side: &Option<Arc<str>>| side.as_deref().map_or(0, str::len);
-        (text(&self.old) + text(&self.new) + self.diff.retained_bytes()) as u64
+        let review = self
+            .review
+            .as_ref()
+            .map_or(0, ReviewDisplayParts::retained_bytes);
+        (text(&self.old) + text(&self.new) + self.diff.retained_bytes() + review) as u64
     }
 }
