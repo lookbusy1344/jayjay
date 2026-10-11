@@ -138,22 +138,36 @@ Conclusion from the baseline: the FFI work is still worth doing.
 - Phase 1 removes most Swift-side marshalling for `preload` (1,193 ms Swift vs 177 ms Rust) and `expand_context` (122 ms vs 6 ms). For `open dense` the cost is Rust compute, mainly review fingerprints re-diffing twice (about 1.5 s of 1.8 s); compute once.
 - Phase 3 stays conditional.
 
-Phase 1 is `wuzrtlqo`, Phase 2 `yoqrxrpy` plus its follow-up child `pnxnkrpt`. Phase 3 is closed (see Results). The phases are implemented; the plan is not done until the checks below pass.
+Changes on top of `rptqmryu`: `wuzrtlqo` Phase 1, `yoqrxrpy` Phase 2, `pnxnkrpt` Phase 2 follow-up, `tryromnz` wasm warning fix for the stack helper, `otntqvvo` eviction check, `tvuwoklx` this write-up, `mrplptsn` review-state budget fix, `umpplnzw` Abandon Selected Lines regression test. Phase 3 is closed (see Results). Pushed as bookmark `ffi-diff-transport`, no PR.
 
-Remaining checks, none yet run on Phases 1–2:
-- `jj fix`, `just lint`, `just test-wasm`, the full Rust suite (`just test`) and app suite (`just test-app`).
-- Diff UI scenes: unified, context expansion, review marks, merge editor. Side-by-side passed (`ReviewNotesScene/testSideBySideBannerCountsOnlyOpenNotes`).
-- Handle lifetime (Risks): after `DiffCache` evicts the `many` entries, footprint returns within 10 % of the empty baseline.
-- Review triage, and an independent review per `agents/code-review.md` before pushing.
+Checks (2026-10-11), run once at the tip of the stack; no commit was checked on its own:
+- `jj fix -s rptqmryu`: reformatted `wuzrtlqo`, `yoqrxrpy`, `pnxnkrpt`.
+- `just lint`: clippy clean. SwiftLint rejected Phase 1's six-parameter `DiffStore.loadFromRepo`; it now takes a `DiffLoadRequest` from `DiffStore.loadRequest`, folded into `wuzrtlqo`.
+- `just test-wasm`: builds without warnings. `histogram_stack.rs` from the pushed stack fix warned four times on wasm; `tryromnz` gates the native-only constants.
+- `cargo test --workspace --no-fail-fast`: 1,446 passed, 2 failed. Both failures drive the external `git` binary and fail without these changes (listed below).
+- `just test-app`: JayJayTests 300 of 300, JayJayDiffUI 108 of 108.
+- UI scenes, 17 tests in BookmarkDiff, ContextExpansion, DiffEdit, DiffStatsReload, ExternalDiffTool, FileDiff, FileEditor, FileRename, HideReviewedFiles, ImageDiffResize, Interdiff, MergeEditorNavigation, ReviewHunkBaseline, ReviewNotes, ReviewSplit: 15 passed. `ImageDiffResizeScene/testResizeImagesAndRestoreEqualWidths` (pane 1027 px, expected 1067 ± 4) and `ReviewNotesScene/testAddAndResolveReviewNoteFromGutterMarker` (note context has one extra line) fail the same way on `rptqmryu`, so they are not regressions.
+- Handle lifetime: `DiffFFIBenchmarks/testEvictionReleasesLoadedDiffs` loads the 40 `many` files into a `DiffCache`. After a warm-up pass, loading retains 9.52 MiB; clearing leaves 0.18 MiB, eviction down to one entry 0.45 MiB. The test asserts both stay under 10 % of the loaded bytes, and fails when `clear()` keeps its entries. With a one-file warm-up, 9 MiB of jj object caches stayed resident and hid the result.
+- Independent review of `f1a32df6..7ddd893e` (fresh agent, code reading only): no Critical, High or Medium findings.
+- Review triage: see the `jayjay review status` result reported with this write-up.
+
+Review finding, fixed in `mrplptsn`:
+- Low: `LoadedDiff::retained_bytes` and the `DiffCache` budget left out the review state, one 64-char fingerprint and one group-map vector per change group, held in Rust and again in Swift's `CachedDiff.review`. On a group-dense file the cache could run 30–50 % over budget (traced, not measured). `ReviewDisplayParts::retained_bytes` now counts the Rust copy and `CachedDiff.retainedBytes` the Swift copy; tests in `loaded_diff/tests.rs` and `DiffCacheTests` failed before the fix.
+
+Verification gaps from the review:
+- Abandon Selected Lines maps the selection through display rows. The base indexed raw rows with display-row numbers and could abandon unselected lines when a raw run interleaves removed and added lines. Phase 1 fixes this; `AbandonSelectedLinesTests` (child of `mrplptsn`) covers it and fails when the keys come from the raw diff's order. No UI scene drives the action.
+- `Repo::load_diff` has no test for the interdiff branch, the file-text fallback, or the nil-revision and error fallbacks in `DiffStore.loadFromRepo`.
+- No test covers `DiffSection` installing the expanded `LoadedDiff` and recomputing its flags.
+- `slicing_rows_by_the_layout_reproduces_wrapped_rows` uses single-span rows only; highlighted multi-span rows and CRLF are not covered.
+- The eviction check lives in the benchmark target, outside `just test-app`.
 
 Known gaps:
 - Phase 1 retained memory rose 8 % against a 30 % reduction target; accepted 2026-10-11.
-- Abandon Selected Lines has no regression test for the display-row mapping.
 - Optional: packed display rows (84 ms of Swift lifting on `dense`, see Phase 3), rows cached on the handle for side-by-side (about 6 ms per width on `dense`), async side-by-side layout.
 
 Open items:
-- Stack fix: WASM build unverified (`rustup target add wasm32-unknown-unknown`, `rustup component add llvm-tools`, `just test-wasm`). Files with more than about 45,000 separate change blocks can still overflow the 32 MiB cap. The word diff may allocate a grown stack per long changed line; growing once per file avoids that. Not measured.
-- Real fix belongs upstream: `similar`'s `diff_impl` (`src/algorithms/histogram.rs`) recurses on the right region; turning that into a loop or explicit work list keeps output identical. No upstream issue or PR exists yet. Upstream `ce3a403` (after 3.2.0, unreleased) reuses anchor-search buffers and should speed up `dense`.
+- Stack fix: files with more than about 45,000 separate change blocks can still overflow the 32 MiB cap. The word diff may allocate a grown stack per long changed line; growing once per file avoids that. Not measured.
+- Real fix belongs upstream: `similar`'s `diff_impl` (`src/algorithms/histogram.rs`) recurses on the right region; turning that into a loop or explicit work list keeps output identical. A patch exists on the fork branch https://github.com/lookbusy1344/similar/tree/fix-histogram-stack (`22bccba2de7f`, `fix(histogram): replace recursion with an explicit work list`); no upstream PR yet. Once released, `with_histogram_stack` and the `stacker` dependency can go. Upstream `ce3a403` (after 3.2.0, unreleased) reuses anchor-search buffers and should speed up `dense`.
 - `jj-diff/src/lib.rs` says histogram "matches `jj diff`"; jj uses its own algorithm in `jj-core` (`src/diff.rs`, LCS over uncommon words, loops over gaps), so output can differ.
 - Swift run takes about 21 s; dropping the warm-up for `open dense` and `preload` would bring it near 15 s.
 - `just lint` does not lint Swift test targets.
