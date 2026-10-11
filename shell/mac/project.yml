@@ -5,6 +5,17 @@ options:
     macOS: "26.0"
   xcodeVersion: "16.0"
 
+configs:
+  Debug: debug
+  Release: release
+  Bench: release
+
+settings:
+  configs:
+    Bench:
+      # The Rust staticlib is arm64-only; a release-type configuration otherwise also links x86_64.
+      ONLY_ACTIVE_ARCH: YES
+
 packages:
   JayJayCore:
     path: .
@@ -26,6 +37,18 @@ schemes:
         - JayJayTests
     run:
       config: Debug
+
+  JayJayBenchmarks:
+    build:
+      targets:
+        JayJay: all
+    test:
+      config: Bench
+      gatherCoverageData: false
+      targets:
+        - JayJayBenchmarks
+    run:
+      config: Bench
 
   JayJayUITests:
     build:
@@ -83,6 +106,9 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         SWIFT_VERSION: "5.10"
         ENABLE_DEBUG_DYLIB: NO
+      configs:
+        Bench:
+          ENABLE_TESTABILITY: YES
     info:
       path: Info.plist
       properties:
@@ -126,6 +152,18 @@ targets:
     platform: macOS
     sources:
       - Tests/JayJayTests
+    hostApplication: JayJay
+    dependencies:
+      - target: JayJay
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+  JayJayBenchmarks:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/JayJayBenchmarks
     hostApplication: JayJay
     dependencies:
       - target: JayJay

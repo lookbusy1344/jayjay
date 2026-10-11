@@ -3,6 +3,7 @@
 pub mod bisect;
 pub mod cmd;
 pub mod env;
+pub mod ffi_bench;
 pub mod formats;
 pub mod linear;
 pub mod repo;
