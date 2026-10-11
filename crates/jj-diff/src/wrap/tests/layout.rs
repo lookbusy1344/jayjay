@@ -40,7 +40,7 @@ fn ranges_follow_display_cells_in_utf16_units() {
 }
 
 #[test]
-fn short_rows_separators_and_short_conflicts_take_one_line() {
+fn rows_on_one_line_are_left_out_and_full_width_rows_stay() {
     let separator = SideBySideRow {
         old: row_side("", "40 unmodified lines", DiffSpanStyle::Separator),
         new: row_side("", "40 unmodified lines", DiffSpanStyle::Separator),
@@ -60,27 +60,17 @@ fn short_rows_separators_and_short_conflicts_take_one_line() {
     };
 
     assert_eq!(
-        wrap_sbs_layout(&[row("", ""), separator, conflict], 10, 10),
-        vec![
-            SbsVisualLine {
-                row_ix: 0,
-                old: range(0, 0),
-                new: range(0, 0),
-                full_width_source: None
-            },
-            SbsVisualLine {
-                row_ix: 1,
-                old: range(0, 19),
-                new: range(0, 19),
-                full_width_source: None
-            },
-            SbsVisualLine {
-                row_ix: 2,
-                old: range(0, 10),
-                new: range(10, 12),
-                full_width_source: Some(DiffSide::New),
-            },
-        ]
+        wrap_sbs_layout(
+            &[row("", ""), separator, row("abcdefghij", "x"), conflict],
+            10,
+            10
+        ),
+        vec![SbsVisualLine {
+            row_ix: 3,
+            old: range(0, 10),
+            new: range(10, 12),
+            full_width_source: Some(DiffSide::New),
+        },]
     );
 }
 
@@ -135,6 +125,7 @@ fn slicing_rows_by_the_layout_reproduces_wrapped_rows() {
     };
     let rows = vec![
         row(&wide, &wide[..wide.len() / 2 + 1]),
+        row("short", "fits"),
         row("short", &wide),
         conflict,
     ];
@@ -142,25 +133,38 @@ fn slicing_rows_by_the_layout_reproduces_wrapped_rows() {
     for cols in [40, 63, 89] {
         let layout = wrap_sbs_layout(&rows, cols, cols + 7);
         let wrapped = wrap_sbs_rows(&rows, cols, cols + 7);
-        assert_eq!(layout.len(), wrapped.len(), "cols {cols}");
-        for (line, expected) in layout.iter().zip(&wrapped) {
-            let source = &rows[line.row_ix as usize];
-            let (old_text, new_text) = match line.full_width_source {
-                Some(DiffSide::Old) => (source.old.text(), source.old.text()),
-                Some(DiffSide::New) => (source.new.text(), source.new.text()),
-                None => (source.old.text(), source.new.text()),
-            };
-            assert_eq!(line.row_ix, expected.row_ix, "cols {cols}");
-            assert_eq!(
-                utf16_slice(&old_text, line.old),
-                expected.row.old.text(),
-                "cols {cols}"
-            );
-            assert_eq!(
-                utf16_slice(&new_text, line.new),
-                expected.row.new.text(),
-                "cols {cols}"
-            );
-        }
+        let visual: Vec<(u32, String, String)> = rows
+            .iter()
+            .enumerate()
+            .flat_map(|(row_ix, source)| {
+                let lines: Vec<_> = layout
+                    .iter()
+                    .filter(|line| line.row_ix == row_ix as u32)
+                    .collect();
+                if lines.is_empty() {
+                    return vec![(row_ix as u32, source.old.text(), source.new.text())];
+                }
+                lines
+                    .into_iter()
+                    .map(|line| {
+                        let (old_text, new_text) = match line.full_width_source {
+                            Some(DiffSide::Old) => (source.old.text(), source.old.text()),
+                            Some(DiffSide::New) => (source.new.text(), source.new.text()),
+                            None => (source.old.text(), source.new.text()),
+                        };
+                        (
+                            line.row_ix,
+                            utf16_slice(&old_text, line.old),
+                            utf16_slice(&new_text, line.new),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let expected: Vec<(u32, String, String)> = wrapped
+            .iter()
+            .map(|line| (line.row_ix, line.row.old.text(), line.row.new.text()))
+            .collect();
+        assert_eq!(visual, expected, "cols {cols}");
     }
 }

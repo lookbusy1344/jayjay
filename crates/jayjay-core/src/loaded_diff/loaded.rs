@@ -116,7 +116,7 @@ impl LoadedDiff {
         build_side_by_side_rows(&self.diff.unpack().lines)
     }
 
-    /// Visual lines of `side_by_side_rows` wrapped to the pane widths.
+    /// Visual lines of the `side_by_side_rows` that wrap at the pane widths or span both panes.
     pub fn side_by_side_layout(&self, old_cols: u32, new_cols: u32) -> Vec<SbsVisualLine> {
         wrap_sbs_layout(&self.side_by_side_rows(), old_cols, new_cols)
     }

@@ -3,28 +3,29 @@ import JayJayCore
 import XCTest
 
 final class SideBySideRowSourceTests: XCTestCase {
-    func testLayoutRangesSliceSpansByUtf16Offsets() {
+    func testLayoutRangesSliceWrappedRowsAndRowsWithoutLinesStayWhole() {
         let row = SideBySideRow(
             old: side("7", ["ab名", "前👨‍👩‍👧"]),
             new: side("7", ["x"]),
             fullWidth: false,
             contextRegion: nil
         )
+        let fitting = SideBySideRow(old: side("8", ["cd"]), new: side("8", ["yz"]), fullWidth: false, contextRegion: nil)
         let layout = [
-            SbsVisualLine(rowIx: 0, old: Utf16Range(start: 0, end: 4), new: Utf16Range(start: 0, end: 1), fullWidthSource: nil),
-            SbsVisualLine(rowIx: 0, old: Utf16Range(start: 4, end: 12), new: Utf16Range(start: 0, end: 0), fullWidthSource: nil)
+            SideBySideLayoutLine(rowIx: 1, old: 0 ..< 4, new: 0 ..< 1, fullWidthSource: nil),
+            SideBySideLayoutLine(rowIx: 1, old: 4 ..< 12, new: 0 ..< 0, fullWidthSource: nil)
         ]
 
-        let rows = SideBySideRowSource.visualRows(rows: [row], layout: layout)
+        let rows = SideBySideRowSource.visualRows(rows: [fitting, row, fitting], layout: layout)
 
-        XCTAssertEqual(rows.map { $0.old.spans.map(\.text) }, [["ab名", "前"], ["👨‍👩‍👧"]])
-        XCTAssertEqual(rows.map { $0.new.spans.map(\.text) }, [["x"], []])
-        XCTAssertEqual(rows.map(\.old.lineNo), ["7", ""])
+        XCTAssertEqual(rows.map { $0.old.spans.map(\.text) }, [["cd"], ["ab名", "前"], ["👨‍👩‍👧"], ["cd"]])
+        XCTAssertEqual(rows.map { $0.new.spans.map(\.text) }, [["yz"], ["x"], [], ["yz"]])
+        XCTAssertEqual(rows.map(\.old.lineNo), ["8", "7", "", "8"])
     }
 
     func testFullWidthLinesSliceTheSourceSideIntoBothPanes() {
         let row = SideBySideRow(old: side("", []), new: side("", ["<<<<<<< ours"]), fullWidth: true, contextRegion: nil)
-        let layout = [SbsVisualLine(rowIx: 0, old: Utf16Range(start: 0, end: 10), new: Utf16Range(start: 10, end: 12), fullWidthSource: .new)]
+        let layout = [SideBySideLayoutLine(rowIx: 0, old: 0 ..< 10, new: 10 ..< 12, fullWidthSource: .new)]
 
         let rows = SideBySideRowSource.visualRows(rows: [row], layout: layout)
 

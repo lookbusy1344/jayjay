@@ -3,11 +3,13 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::types::{DiffLine, DiffSpan};
 
-/// One bucket of a wrapped line: its display-cell range and the spans in it.
+/// One bucket of a wrapped line: its display-cell range, its UTF-16 range, and the spans in it.
 #[derive(Default)]
 pub(super) struct SpanChunk {
     pub(super) start: usize,
     pub(super) end: usize,
+    pub(super) utf16_start: usize,
+    pub(super) utf16_end: usize,
     pub(super) spans: Vec<DiffSpan>,
 }
 
@@ -42,7 +44,22 @@ pub(super) fn spans_char_len(spans: &[DiffSpan]) -> usize {
 /// Never splits inside a grapheme cluster; a wide glyph that would straddle a
 /// chunk edge moves wholly into the next chunk.
 pub(super) fn side_chunks(spans: &[DiffSpan], cols: usize) -> Vec<SpanChunk> {
-    let mut writer = ChunkWriter::new(cols.max(1));
+    chunk_spans(spans, cols, Text::Keep)
+}
+
+/// The ranges of `side_chunks` without their spans.
+pub(super) fn side_extents(spans: &[DiffSpan], cols: usize) -> Vec<SpanChunk> {
+    chunk_spans(spans, cols, Text::Drop)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Text {
+    Keep,
+    Drop,
+}
+
+fn chunk_spans(spans: &[DiffSpan], cols: usize, text: Text) -> Vec<SpanChunk> {
+    let mut writer = ChunkWriter::new(cols.max(1), text);
     for span in spans {
         if is_single_cell_ascii(&span.text) {
             let mut rest = span.text.as_str();
@@ -53,7 +70,7 @@ pub(super) fn side_chunks(spans: &[DiffSpan], cols: usize) -> Vec<SpanChunk> {
                     continue;
                 }
                 let (head, tail) = rest.split_at(room.min(rest.len()));
-                writer.push(head, head.len());
+                writer.push(head, head.len(), head.len());
                 rest = tail;
             }
         } else {
@@ -62,7 +79,7 @@ pub(super) fn side_chunks(spans: &[DiffSpan], cols: usize) -> Vec<SpanChunk> {
                 if !writer.fits(w) {
                     writer.break_chunk(span);
                 }
-                writer.push(g, w);
+                writer.push(g, w, g.encode_utf16().count());
             }
         }
         writer.flush(span);
@@ -73,15 +90,17 @@ pub(super) fn side_chunks(spans: &[DiffSpan], cols: usize) -> Vec<SpanChunk> {
 /// Fills `current` until it reaches `cols`; `buf` holds the current span's text not yet flushed.
 struct ChunkWriter {
     cols: usize,
+    text: Text,
     chunks: Vec<SpanChunk>,
     current: SpanChunk,
     buf: String,
 }
 
 impl ChunkWriter {
-    fn new(cols: usize) -> Self {
+    fn new(cols: usize, text: Text) -> Self {
         Self {
             cols,
+            text,
             chunks: Vec::new(),
             current: SpanChunk::default(),
             buf: String::new(),
@@ -101,17 +120,21 @@ impl ChunkWriter {
         self.used() == 0 || cells <= self.room()
     }
 
-    fn push(&mut self, text: &str, cells: usize) {
-        self.buf.push_str(text);
+    fn push(&mut self, text: &str, cells: usize, utf16_units: usize) {
+        if self.text == Text::Keep {
+            self.buf.push_str(text);
+        }
         self.current.end += cells;
+        self.current.utf16_end += utf16_units;
     }
 
     fn break_chunk(&mut self, source: &DiffSpan) {
         self.flush(source);
-        let start = self.current.end;
         let next = SpanChunk {
-            start,
-            end: start,
+            start: self.current.end,
+            end: self.current.end,
+            utf16_start: self.current.utf16_end,
+            utf16_end: self.current.utf16_end,
             spans: Vec::new(),
         };
         self.chunks.push(std::mem::replace(&mut self.current, next));

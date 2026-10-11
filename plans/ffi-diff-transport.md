@@ -138,13 +138,23 @@ Conclusion from the baseline: the FFI work is still worth doing.
 - Phase 1 removes most Swift-side marshalling for `preload` (1,193 ms Swift vs 177 ms Rust) and `expand_context` (122 ms vs 6 ms). For `open dense` the cost is Rust compute, mainly review fingerprints re-diffing twice (about 1.5 s of 1.8 s); compute once.
 - Phase 3 stays conditional.
 
-Next step: decide Phase 3 from the Phase 2 numbers. Phase 1 is `wuzrtlqo`, Phase 2 its child; see Results.
+Phase 1 is `wuzrtlqo`, Phase 2 `yoqrxrpy` plus its follow-up child `pnxnkrpt`. Phase 3 is closed (see Results). The phases are implemented; the plan is not done until the checks below pass.
+
+Remaining checks, none yet run on Phases 1–2:
+- `jj fix`, `just lint`, `just test-wasm`, the full Rust suite (`just test`) and app suite (`just test-app`).
+- Diff UI scenes: unified, context expansion, review marks, merge editor. Side-by-side passed (`ReviewNotesScene/testSideBySideBannerCountsOnlyOpenNotes`).
+- Handle lifetime (Risks): after `DiffCache` evicts the `many` entries, footprint returns within 10 % of the empty baseline.
+- Review triage, and an independent review per `agents/code-review.md` before pushing.
+
+Known gaps:
+- Phase 1 retained memory rose 8 % against a 30 % reduction target; accepted 2026-10-11.
+- Abandon Selected Lines has no regression test for the display-row mapping.
+- Optional: packed display rows (84 ms of Swift lifting on `dense`, see Phase 3), rows cached on the handle for side-by-side (about 6 ms per width on `dense`), async side-by-side layout.
 
 Open items:
 - Stack fix: WASM build unverified (`rustup target add wasm32-unknown-unknown`, `rustup component add llvm-tools`, `just test-wasm`). Files with more than about 45,000 separate change blocks can still overflow the 32 MiB cap. The word diff may allocate a grown stack per long changed line; growing once per file avoids that. Not measured.
 - Real fix belongs upstream: `similar`'s `diff_impl` (`src/algorithms/histogram.rs`) recurses on the right region; turning that into a loop or explicit work list keeps output identical. No upstream issue or PR exists yet. Upstream `ce3a403` (after 3.2.0, unreleased) reuses anchor-search buffers and should speed up `dense`.
 - `jj-diff/src/lib.rs` says histogram "matches `jj diff`"; jj uses its own algorithm in `jj-core` (`src/diff.rs`, LCS over uncommon words, loops over gaps), so output can differ.
-- Rust replay numbers are from `b3f0be45`; rerun with `just bench-wire --calls` after Phase 1.
 - Swift run takes about 21 s; dropping the warm-up for `open dense` and `preload` would bring it near 15 s.
 - `just lint` does not lint Swift test targets.
 - Two tests fail locally where they drive the external `git` binary, unrelated to these changes and not checked on `main`: `jayjay-core` `repo::init::tests::preserves_git_worktree_init_error`, GPUI `repo_workspace_switch::removing_a_workspace_drops_drafts_parked_in_other_windows`.
@@ -364,8 +374,36 @@ Rust replay, `just bench-wire sbs` (20 widths): dense 0.00 MiB → Rust, 8.22 Mi
 
 Swift, `just bench-ffi`, per width change: dense 45.8 ms (3 runs), wide 24.8 ms (6 runs), no retained memory.
 
-Remaining cost is Rust: about 25 ms per width on dense, from unpacking, rebuilding rows and allocating wrapped spans that the layout discards. A geometry-only chunk walk, or rows cached on the handle while side-by-side is shown, would remove most of it; moving the call off the main thread would hide the rest.
+Follow-up (child of `yoqrxrpy`), driven by a per-call probe: the 45.8 ms on dense was 25 ms Rust wrapping, 13 ms lifting 12,000 `SbsVisualLine` records into Swift (about 1.1 µs each) and 5 ms slicing.
+- `wrap_sbs_layout` walks the same chunker as `wrap_sbs_rows` (`side_extents`, `chunks.rs`), which counts UTF-16 units and keeps no text. It no longer calls `wrap_sbs_rows`.
+- The layout lists only rows that wrap or span full width. Any other row is one visual line, and Swift uses the row it holds unchanged.
+- `LoadedDiff.packedSideBySideLayout` returns the layout as one byte buffer, six little-endian `u32` per line (`jayjay-uniffi/src/packed_layout.rs`). `SideBySideLayoutLine.decode` (JayJayDiffUI) reads it. Swift copies one buffer and lifts no records.
+- The call stays synchronous on the main thread.
 
+Validated: `cargo test -p jj-diff -p jayjay-uniffi`, `cargo test -p jayjay-core --test integration loaded_diff`, `swift test` in JayJayDiffUI (108 tests), UI scene `ReviewNotesScene/testSideBySideBannerCountsOnlyOpenNotes`, `cargo clippy -p jj-diff -p jayjay-uniffi --all-targets`. Not run: `jj fix`, `just lint`, `just test-wasm`, `just test-app`, the other diff UI scenes.
+
+Rust replay, `just bench-wire sbs` (20 widths): dense 6.04 MiB → Swift over 20 calls, 141.5 ms Rust (7.1 ms per width, 6.3 of it unpacking and rebuilding rows); wide 2.12 MiB, 155.2 ms (7.8 ms per width, grapheme work on 400–2,000-char lines).
+
+Swift, `just bench-ffi`, full run:
+
+| Benchmark | Scenario | Median ms | Runs | Retained MiB | Retained blocks |
+| --- | --- | ---: | ---: | ---: | ---: |
+| open_unified | sparse | 3.0 | 10 | 2.26 | 43 |
+| open_unified | dense | 959.5 | 2 | 9.09 | 26,813 |
+| resize_sbs, per width change | dense | 14.2 | 9 | 0.00 | 0 |
+| resize_sbs, per width change | wide | 10.6 | 10 | 0.00 | 0 |
+| expand_context | sparse | 62.1 | 10 | 4.89 | 11,944 |
+| preload | many | 255.3 | 4 | 9.38 | 9,822 |
+
+Against the baseline, a width change costs 14.2 ms on dense (267.2 ms) and 10.6 ms on wide (32.6 ms). Every dense row is 85–120 chars and wraps at every bench width, so this is the worst case for leaving out rows that fit.
+
+Remaining options, not done: rows cached on the handle while side-by-side is shown would save about 6 ms per width on dense, at the cost of holding the rows in Rust; moving the call off the main thread would hide the rest.
+
+### Phase 3: closed (2026-10-11)
+
+Its condition is not met. On `open_unified dense`, 6,000 of 100,469 span strings exceed Swift's 15-byte inline limit, so span `String` decoding is not a top allocation site. One text per line plus a run array would hold about as many blocks as the current spans array plus long span strings, so the 30 % `blocks_in_use` criterion cannot be met.
+
+The probe found a time cost instead: `displayRows()` on dense takes about 84 ms in Swift against 4.7 ms in Rust, from lifting about 100,000 span records. Phase 3's `SpanRun` records would keep that cost. A packed buffer, as for the side-by-side layout, would remove it. That is about 9 % of `open_unified dense`, whose 960 ms is Rust compute (highlighted display diff plus the canonical review diff). A new plan item if wanted.
 
 ## Risks
 
