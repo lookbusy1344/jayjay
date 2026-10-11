@@ -6,9 +6,17 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
     weak var rightContainer: DiffTextContainerView?
     private var syncing = false
 
-    // State for rebuild-on-resize: stored each updateNSView call, then re-used
-    // whenever the pane width changes enough to change the wrap-column count.
-    var diff: FileDiff?
+    /// State for rebuild-on-resize: stored each updateNSView call, then re-used
+    /// whenever the pane width changes enough to change the wrap-column count.
+    var diff: LoadedDiff? {
+        didSet {
+            guard diff !== oldValue else { return }
+            rows = diff?.sideBySideRows() ?? []
+            lastRenderInputs = nil
+        }
+    }
+
+    private var rows: [SideBySideRow] = []
     var font: NSFont?
     var lineSpacing: Double = 1
     var theme: DiffColors?
@@ -17,8 +25,8 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
     var reduceMotion = false
     private var lastRenderInputs: RenderInputs?
 
+    /// The diff itself is not compared: setting a different one clears the last inputs.
     private struct RenderInputs: Equatable {
-        let lines: [DiffLine]
         let font: NSFont
         let lineSpacing: Double
         let theme: DiffColors
@@ -92,7 +100,7 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
     }
 
     func renderIfNeeded() {
-        guard let diff,
+        guard diff != nil,
               let font,
               let theme,
               let left = leftContainer?.paneViews(),
@@ -114,7 +122,6 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
             right.container.scheduleRevealFeedback(revealFeedback, reduceMotion: reduceMotion)
         }
         let inputs = RenderInputs(
-            lines: diff.lines,
             font: font,
             lineSpacing: lineSpacing,
             theme: theme,
@@ -125,7 +132,7 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
         guard inputs != lastRenderInputs else { return }
         lastRenderInputs = inputs
 
-        let visualRows = SideBySideRowSource.visualRows(lines: diff.lines, oldCols: oldCols, newCols: newCols)
+        let visualRows = SideBySideRowSource.visualRows(rows: rows, oldCols: oldCols, newCols: newCols)
         renderVisualRows(visualRows, font: font, theme: theme, left: left, right: right)
     }
 

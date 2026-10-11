@@ -16,6 +16,7 @@ mod file_tree;
 mod fonts;
 mod fuzzy;
 mod github_alias;
+mod loaded_diff;
 mod markdown;
 #[cfg(feature = "desktop")]
 mod merge_scroll;
@@ -41,6 +42,7 @@ pub use error::*;
 pub use file_tree::*;
 pub use fonts::*;
 pub use fuzzy::*;
+pub use loaded_diff::*;
 pub use markdown::*;
 pub use network::*;
 pub use palette::*;

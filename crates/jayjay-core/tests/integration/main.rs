@@ -13,6 +13,7 @@ mod fix;
 mod format_projections;
 mod insert_change;
 mod lfs;
+mod loaded_diff;
 mod mutations_immutable;
 mod overview;
 mod palette_command;

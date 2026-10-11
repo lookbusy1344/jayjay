@@ -1,17 +1,34 @@
 use jayjay_core as core;
 use jayjay_core::diff::{
     ChangeGroup, CollapsedDiff, ConflictBlock, ConflictBlockSection, ConflictLineKind,
-    ContextExpansion, ContextExpansionFinish, ContextExpansionRequest, ContextExpansionReveal,
-    ContextRegion, DiffDisplayItem, DiffLine, DiffSide, DiffSpan, DiffSpanStyle,
-    DisplayLineMapping, FileDiff, LineSpan, RowSide, SideBySideRow, WrappedDiffLine, WrappedSbsRow,
-    WrappedSide,
+    ContextExpansion, ContextExpansionRequest, ContextExpansionReveal, ContextRegion,
+    DiffDisplayItem, DiffLine, DiffSide, DiffSpan, DiffSpanStyle, DisplayLineMapping, FileDiff,
+    LineSpan, RowSide, SideBySideRow, WrappedDiffLine, WrappedSbsRow, WrappedSide,
 };
 use jayjay_core::diff_edit::{DiffEditFile, DiffEditFileDiff};
 use jayjay_core::syntax::SyntaxToken;
 use jayjay_core::{
-    DiffContent, DiffEditDestination, DiffEditFileSelection, DiffEditRange, DiffHunk, DiffPreview,
-    DiffProjection, DiffProjectionMode, DiffRenderKind, DiffStats, FileDiffStats, HunkType,
+    DiffContent, DiffEditDestination, DiffEditFileSelection, DiffEditRange, DiffHunk,
+    DiffLoadRequest, DiffPreview, DiffProjection, DiffProjectionMode, DiffRenderKind, DiffStats,
+    DisplayRows, FileDiffStats, HunkType,
 };
+
+#[uniffi::remote(Record)]
+pub struct DisplayRows {
+    pub lines: Vec<core::diff::DiffLine>,
+    pub groups: Vec<core::diff::ChangeGroup>,
+}
+
+#[uniffi::remote(Record)]
+pub struct DiffLoadRequest {
+    pub rev: String,
+    pub from_rev: Option<String>,
+    pub path: String,
+    pub old_path: Option<String>,
+    pub hunk_type: core::HunkType,
+    pub projection_mode: core::DiffProjectionMode,
+    pub ignore_whitespace: bool,
+}
 
 #[uniffi::remote(Enum)]
 pub enum HunkType {
@@ -254,20 +271,6 @@ pub enum ContextExpansionRequest {
 pub struct ContextExpansionReveal {
     pub generation: u64,
     pub new_lines: core::diff::LineSpan,
-}
-
-#[uniffi::remote(Enum)]
-pub enum ContextExpansionFinish {
-    Discarded,
-    Applied {
-        diff: core::diff::FileDiff,
-        reveal: Option<core::diff::ContextExpansionReveal>,
-        selection_generation: u64,
-        next: Option<core::diff::ContextExpansionRequest>,
-    },
-    Failed {
-        message: String,
-    },
 }
 
 #[uniffi::remote(Record)]

@@ -3,6 +3,7 @@ mod copies;
 mod current_text;
 mod entry;
 mod formats;
+mod loaded;
 mod materialize;
 
 use std::collections::HashSet;

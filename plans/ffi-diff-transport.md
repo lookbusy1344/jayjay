@@ -138,7 +138,7 @@ Conclusion from the baseline: the FFI work is still worth doing.
 - Phase 1 removes most Swift-side marshalling for `preload` (1,193 ms Swift vs 177 ms Rust) and `expand_context` (122 ms vs 6 ms). For `open dense` the cost is Rust compute, mainly review fingerprints re-diffing twice (about 1.5 s of 1.8 s); compute once.
 - Phase 3 stays conditional.
 
-Next step: Phase 1, starting with its failing tests.
+Next step: Phase 2, starting with its failing tests. Phase 1 is `wuzrtlqo`; see Results.
 
 Open items:
 - Stack fix: WASM build unverified (`rustup target add wasm32-unknown-unknown`, `rustup component add llvm-tools`, `just test-wasm`). Files with more than about 45,000 separate change blocks can still overflow the 32 MiB cap. The word diff may allocate a grown stack per long changed line; growing once per file avoids that. Not measured.
@@ -314,7 +314,44 @@ Before declaring a phase done: two cleanup rounds on the whole diff, `jj --ignor
 
 ## Results
 
-Fill one row block per phase, same layout as the baseline table, with the revision measured.
+### Phase 1 (2026-10-11, on top of `rptqmryu`)
+
+Design changes from the plan, driven by measurement:
+- `LoadedDiff` retains texts, the review parts and the diff packed into three buffers (`loaded_diff/packed.rs`). Display rows are rebuilt per request. Storing `FileDiff` plus display rows in Rust retained 36 MiB for `preload many` (one heap block per span).
+- The Swift cache holds the handle, texts, review parts and flags. Display rows cross when a section shows the diff (`DisplayRows`, one call).
+- Review snapshot and group map share one canonical diff and reuse the display rows; the canonical diff is still computed once more (exact whitespace, uncollapsed).
+- Side-by-side reads `sideBySideRows()` once per handle; per width only `wrapSbsRows` crosses. Phase 2 removes that.
+- Abandon Selected Lines maps the selection through display rows; it indexed raw rows, which order removed/added lines differently.
+
+Rust replay, `just bench-wire`:
+
+| Workload | Scenario | Calls | MiB → Rust | MiB → Swift | Rust allocs | Rust ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| open | sparse | 5 | 0.00 | 1.11 | 37,128 | 2.7 |
+| open | dense | 5 | 0.00 | 3.61 | 807,710 | 1,033.9 |
+| open | wide | 5 | 0.00 | 2.15 | 7,491 | 6.5 |
+| open | many | 200 | 0.00 | 4.97 | 1,354,590 | 238.2 |
+| sbs (20 widths) | dense | 21 | 58.58 | 76.02 | 8,504,692 | 178.5 |
+| sbs (20 widths) | wide | 21 | 19.35 | 27.71 | 1,197,766 | 199.5 |
+| expand | sparse | 6 | 0.00 | 1.51 | 342,123 | 5.6 |
+| preload | many | 160 | 0.00 | 1.35 | 867,040 | 228.9 |
+
+Swift end-to-end, `just bench-ffi`:
+
+| Benchmark | Scenario | Median ms | Runs | Retained MiB | Retained blocks |
+| --- | --- | ---: | ---: | ---: | ---: |
+| open_unified | sparse | 3.1 | 10 | 2.26 | 38 |
+| open_unified | dense | 956.6 | 2 | 10.35 | 30,602 |
+| resize_sbs, per width change | dense | 170.4 | 2 | -0.17 | -3,930 |
+| resize_sbs, per width change | wide | 33.5 | 4 | 0.02 | 68 |
+| expand_context | sparse | 62.1 | 10 | 4.89 | 11,937 |
+| preload | many | 256.7 | 4 | 9.13 | 5,917 |
+
+Exit criteria: `preload many` −78 % and `expand_context sparse` −49 % in time pass. `preload many` retained bytes rise 8 % (8.43 → 9.13 MiB; blocks 18,662 → 5,917), so the 30 % memory criterion fails: the cache holds texts in both Rust and Swift. `open dense` Rust time is 1.03 s, not the expected ~0.5 s; the remaining cost is the highlighted display diff plus the canonical review diff.
+
+Decision (2026-10-11): accept Phase 1 with the 8 % retained-memory rise and proceed to Phase 2. Fetching texts from the handle on demand (SVG, Markdown and HTML previews, diff edit, Abandon Selected Lines) would remove the Swift copy; it stays open as a follow-up.
+
+Not yet run on Phase 1: UI tests, `just test-wasm`, full Rust and app suites, `jj fix`, `just lint`, review triage. Abandon Selected Lines has no regression test for the display-row mapping.
 
 ## Risks
 

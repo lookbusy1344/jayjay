@@ -23,6 +23,7 @@ pub mod fuzzy;
 pub mod github_alias;
 #[cfg(feature = "repository")]
 mod jj_command;
+mod loaded_diff;
 #[cfg(feature = "repository")]
 mod json_store;
 #[cfg(feature = "repository")]
@@ -37,6 +38,7 @@ pub mod projection;
 mod repo;
 #[cfg(feature = "repository")]
 pub mod repositories;
+mod review_snapshot;
 #[cfg(feature = "repository")]
 pub mod revset;
 pub mod theme;
@@ -58,6 +60,7 @@ pub use fonts::{
 };
 #[cfg(feature = "repository")]
 pub use jj_command::{JjCommand, JjCommandResult};
+pub use loaded_diff::{DiffLoadRequest, DisplayRows, LoadedDiff};
 #[cfg(feature = "repository")]
 pub use merge_editor::{MergeEditorHunkExt, MergeScrollMap};
 #[cfg(feature = "repository")]
@@ -69,10 +72,10 @@ pub use repo::{
     check_glab_environment, check_jj_environment, check_origin_environment, find_existing_binary,
     home_dir, init_jj_git_repo, is_executable_file, is_valid_bookmark_name,
     is_valid_workspace_name, jj_user_config, login_shell, login_shell_path, mark_review_file,
-    resolve_review_note, review_display_group_map_from_hunk, review_notes_output,
-    review_snapshot_from_hunk, review_status_output, unmark_review_files, workspace_primary_root,
-    workspace_root,
+    resolve_review_note, review_notes_output, review_status_output, unmark_review_files,
+    workspace_primary_root, workspace_root,
 };
+pub use review_snapshot::{review_display_group_map_from_hunk, review_snapshot_from_hunk};
 #[cfg(feature = "repository")]
 pub use revset::{
     BookmarkFilterTarget, DEFAULT_REVSET, DEFAULT_REVSET_DEPTH, RecentRevsetStore,

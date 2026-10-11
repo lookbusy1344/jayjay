@@ -1,4 +1,8 @@
-use crate::review_fingerprint::{canonical_review_snapshot, display_group_canonical_indices};
+use crate::compute::compute_file_diff;
+use crate::conflicts::build_diff_display_lines;
+use crate::review_fingerprint::{
+    canonical_review_snapshot, display_group_canonical_indices, review_display_parts,
+};
 
 fn two_group_old() -> &'static str {
     "head-1\nhead-2\nhead-3\nhead-4\nAAA\nmiddle\nBBB\ntail\n"
@@ -94,4 +98,31 @@ fn payload_and_context_are_exact_bytes() {
     assert_ne!(digests("keep\r\nAAA\nend\n", "keep\r\naaa\nend\n"), lf);
     assert_ne!(digests("a\nb\n", "a\nB"), digests("a\nb\n", "a\nB\n"));
     assert_eq!(digests("keep\nfoo  \nend\n", "keep\nfoo\nend\n").len(), 1);
+}
+
+#[test]
+fn display_parts_take_the_rendered_rows_and_keep_fingerprints() {
+    let parts_for = |old: &str, new: &str, ignore_whitespace: bool| {
+        let display = compute_file_diff("notes.txt", old, new, ignore_whitespace);
+        review_display_parts(old, new, &build_diff_display_lines(&display.lines))
+    };
+
+    let parts = parts_for("keep\nA\rB\nend\n", "keep\na\rb\nend\n", false);
+    let digests: Vec<_> = parts
+        .snapshot
+        .fingerprints
+        .iter()
+        .map(|fingerprint| fingerprint.digest.as_str())
+        .collect();
+    assert_eq!(
+        digests,
+        vec!["a79c03a09045d43b19fd82c6a3409fc2872a2e0b69272830e021b9fe4dd34bb5"]
+    );
+    assert_eq!(parts.group_map, vec![vec![0]]);
+
+    let old = "keep\nfoo  \nunchanged\nbar\nend\n";
+    let new = "keep\nfoo\nunchanged\nbaz\nend\n";
+    let hidden = parts_for(old, new, true);
+    assert_eq!(hidden.snapshot.fingerprints.len(), 2);
+    assert_eq!(hidden.group_map, vec![vec![1]]);
 }

@@ -171,17 +171,14 @@ struct ReviewSnapshotLoad {
     let ignoreWhitespace: Bool
 
     func load() async -> ReviewFileSnapshot? {
-        if let cached = await diffStore.cachedDiff(
+        if let snapshot = await diffStore.cachedDiff(
             hunk: hunk,
             rev: rev,
             commitId: commitId,
             compareFromRev: compareFromRev,
             ignoreWhitespace: ignoreWhitespace
-        ) {
-            let snapshot = reviewSnapshotFromDiffHunk(hunk: cached.content.applied(to: hunk))
-            if !snapshot.fingerprints.isEmpty {
-                return snapshot
-            }
+        )?.review?.snapshot {
+            return snapshot
         }
         return try? repo?.reviewFileSnapshot(rev: rev, path: hunk.path, oldPath: hunk.oldPath)
     }

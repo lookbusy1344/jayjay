@@ -1,16 +1,16 @@
 import JayJayCore
 
 extension DiffSection {
-    var fileDiff: FileDiff? {
-        loadedDiff?.fileDiff
+    var renderedDiff: DiffStore.CachedDiff? {
+        loadedDiff?.diff
     }
 
     var displayGroups: [ChangeGroup]? {
-        loadedDiff?.displayGroups
+        loadedDiff?.rows?.groups
     }
 
     var loadedDisplayLines: [DiffLine]? {
-        loadedDiff?.displayLines
+        loadedDiff?.rows?.lines
     }
 
     var loadedPath: String? {

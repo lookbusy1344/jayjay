@@ -6,7 +6,7 @@ import XCTest
 
 final class SideBySideRenderingTests: XCTestCase {
     func testUnchangedRenderPreservesTextStorageAndSelection() throws {
-        let diff = computeFileDiff(path: "sample.rs", oldContent: "let value = 1;\n", newContent: "let value = 2;\n", ignoreWhitespace: false)
+        let diff = loadedDiff(path: "sample.rs", old: "let value = 1;\n", new: "let value = 2;\n")
         let (coordinator, left, right) = makeRenderer(diff)
         coordinator.applySelectionResetGeneration(0)
         let storage = try XCTUnwrap(left.textView.textStorage)
@@ -37,7 +37,7 @@ final class SideBySideRenderingTests: XCTestCase {
 
     func testContentFontThemeAndWidthChangesUpdateRenderedText() throws {
         let source = "let value = 123; // " + String(repeating: "long comment ", count: 10) + "\n"
-        let diff = computeFileDiff(path: "sample.rs", oldContent: source, newContent: source + "new line\n", ignoreWhitespace: false)
+        let diff = loadedDiff(path: "sample.rs", old: source, new: source + "new line\n")
         let (coordinator, left, right) = makeRenderer(diff)
         let storage = try XCTUnwrap(left.textView.textStorage)
         let original = NSAttributedString(attributedString: storage)
@@ -64,7 +64,7 @@ final class SideBySideRenderingTests: XCTestCase {
         coordinator.renderIfNeeded()
         XCTAssertGreaterThan(storage.string.filter { $0 == "\n" }.count, rightNarrowLineCount)
 
-        coordinator.diff = computeFileDiff(path: "sample.rs", oldContent: "before\n", newContent: "after\n", ignoreWhitespace: false)
+        coordinator.diff = loadedDiff(path: "sample.rs", old: "before\n", new: "after\n")
         coordinator.renderIfNeeded()
         XCTAssertEqual(storage.string, "before\n")
         XCTAssertEqual(right.textView.string, "after\n")
@@ -72,7 +72,7 @@ final class SideBySideRenderingTests: XCTestCase {
 
     func testExpansionLinksFollowAvailabilityAndUseLatestCallback() throws {
         let source = (0 ..< 30).map { "line \($0)\n" }.joined()
-        let diff = computeFileDiff(path: "sample.txt", oldContent: source, newContent: source + "added\n", ignoreWhitespace: false)
+        let diff = loadedDiff(path: "sample.txt", old: source, new: source + "added\n")
         let (coordinator, left, right) = makeRenderer(diff)
         let storage = try XCTUnwrap(left.textView.textStorage)
         func link() -> Any? {
@@ -102,7 +102,17 @@ final class SideBySideRenderingTests: XCTestCase {
         XCTAssertFalse(right.textView.string.isEmpty)
     }
 
-    private func makeRenderer(_ diff: FileDiff) -> (SideBySideCoordinator, DiffTextContainerView, DiffTextContainerView) {
+    private func loadedDiff(path: String, old: String, new: String) -> LoadedDiff {
+        LoadedDiff.fromHunk(
+            hunk: DiffHunk(
+                path: path, oldPath: nil, oldContent: old, newContent: new,
+                oldPreview: nil, newPreview: nil, hunkType: .modified, reviewIdentity: "", projection: nil
+            ),
+            ignoreWhitespace: false
+        )
+    }
+
+    private func makeRenderer(_ diff: LoadedDiff) -> (SideBySideCoordinator, DiffTextContainerView, DiffTextContainerView) {
         let view = SideBySideRepresentable(diff: diff)
         let left = view.makeContainer()
         let right = view.makeContainer()

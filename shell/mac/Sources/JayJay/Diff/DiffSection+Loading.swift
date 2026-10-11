@@ -13,7 +13,7 @@ extension DiffSection {
         Self.hasCurrentRenderableDiff(
             loadedPath: loadedPath,
             hunkPath: hunk.path,
-            hasRenderedDiff: fileDiff != nil,
+            hasRenderedDiff: renderedDiff != nil,
             loadedProjectionMode: loadedProjection?.mode,
             requestedProjectionMode: projectionRequestMode
         )
@@ -66,14 +66,7 @@ extension DiffSection {
         ].joined(separator: "|")
         if let content = placeholderContent {
             resetContextExpansion()
-            loadedDiff = DiffSectionLoadedDiff(
-                path: hunk.path,
-                fileDiff: nil,
-                displayLines: nil,
-                displayGroups: nil,
-                content: content,
-                basis: nil
-            )
+            loadedDiff = DiffSectionLoadedDiff(placeholder: content, path: hunk.path)
             isComputing = false
             return
         }
@@ -95,7 +88,7 @@ extension DiffSection {
         if !Self.shouldKeepLoadedContentWhileLoading(
             loadedPath: loadedPath,
             hunkPath: path,
-            hasRenderedDiff: fileDiff != nil,
+            hasRenderedDiff: renderedDiff != nil,
             loadedProjectionMode: loadedProjection?.mode,
             requestedProjectionMode: requestedProjectionMode
         ) {
@@ -128,41 +121,17 @@ extension DiffSection {
         path: String,
         basis: String
     ) async {
-        let prepared = await Self.prepareLoadedDiff(
-            cached,
-            path: path,
-            basis: basis,
-            hunk: hunk,
-            ignoreWhitespace: settings.ignoreWhitespace
-        )
-        guard !Task.isCancelled, hunk.path == path else { return }
+        let hunk = hunk
+        let prepared = await Task.detached {
+            DiffSectionLoadedDiff(cached, path: path, basis: basis, hunk: hunk)
+        }.value
+        guard !Task.isCancelled, self.hunk.path == path else { return }
         apply(prepared)
     }
 
     private func clearLoadedContent() {
         resetContextExpansion()
         loadedDiff = nil
-    }
-
-    nonisolated static func prepareLoadedDiff(
-        _ cached: DiffStore.CachedDiff,
-        path: String,
-        basis: String,
-        hunk: DiffHunk,
-        ignoreWhitespace: Bool
-    ) async -> DiffSectionLoadedDiff {
-        await Task.detached {
-            let lines = diffDisplayLines(lines: cached.diff.lines)
-            return DiffSectionLoadedDiff(
-                path: path,
-                fileDiff: cached.diff,
-                displayLines: lines,
-                displayGroups: changeGroups(lines: lines),
-                content: cached.content,
-                basis: basis
-            )
-            .withReviewFingerprints(hunk: hunk, ignoreWhitespace: ignoreWhitespace)
-        }.value
     }
 
     private func apply(_ prepared: DiffSectionLoadedDiff) {

@@ -169,7 +169,6 @@ extension DiffSection {
 
     private var effectiveSideBySideDiff: Bool {
         guard settings.sideBySideDiff else { return false }
-        guard let fileDiff else { return true }
-        return canUseSideBySide(fileDiff)
+        return renderedDiff?.flags.supportsSideBySide ?? true
     }
 }

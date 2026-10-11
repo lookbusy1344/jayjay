@@ -49,8 +49,8 @@ pub use expand_session::{
 pub use highlight::{highlight_file, highlight_file_against_base};
 pub use placeholders::{is_git_lfs, is_git_submodule};
 pub use review_fingerprint::{
-    REVIEW_FINGERPRINT_VERSION, ReviewFileSnapshot, ReviewGroupFingerprint,
-    canonical_review_snapshot, display_group_canonical_indices,
+    REVIEW_FINGERPRINT_VERSION, ReviewDisplayParts, ReviewFileSnapshot, ReviewGroupFingerprint,
+    canonical_review_snapshot, display_group_canonical_indices, review_display_parts,
 };
 pub use side_by_side::{RowSide, SideBySideRow, build_side_by_side_rows};
 pub use stats::count_changed_lines;

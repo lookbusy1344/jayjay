@@ -5,13 +5,16 @@ import SwiftUI
 public struct NativeDiffView: NSViewRepresentable {
     public typealias Coordinator = NativeDiffContextCoordinator
 
-    public let diff: FileDiff
+    /// Raw diff rows, or display rows and groups the owner computed once per loaded diff; `updateNSView` re-runs on every observed change and the display-line/group FFI is O(diff bytes).
+    enum Rows {
+        case raw([DiffLine])
+        case display([DiffLine], groups: [ChangeGroup])
+    }
+
+    let rows: Rows
     public var gutterActions: (any DiffGutterContextActions)?
     /// Passed as a property (not pulled through `gutterActions`) so SwiftUI re-runs `updateNSView` when the note list changes.
     public var reviewNotes: [DiffReviewNoteSummary]
-    /// Precomputed once per loaded diff by the owner; `updateNSView` re-runs on every observed change and the display-line/group FFI is O(diff bytes).
-    public var displayLines: [DiffLine]?
-    public var displayGroups: [ChangeGroup]?
     public var reserveNoteColumn: Bool
     public var compactGutterWidth: Bool
     /// Shows a dedicated +/- column for compact merge-hunk comparisons where the change type must never be confused with editable text.
@@ -35,8 +38,6 @@ public struct NativeDiffView: NSViewRepresentable {
         diff: FileDiff,
         gutterActions: (any DiffGutterContextActions)? = nil,
         reviewNotes: [DiffReviewNoteSummary] = [],
-        displayLines: [DiffLine]? = nil,
-        displayGroups: [ChangeGroup]? = nil,
         reserveNoteColumn: Bool = false,
         compactGutterWidth: Bool = false,
         showsChangeMarkers: Bool = false,
@@ -47,11 +48,70 @@ public struct NativeDiffView: NSViewRepresentable {
         revealFeedback: ContextExpansionReveal? = nil,
         onContentHeightChanged: ((CGFloat) -> Void)? = nil
     ) {
-        self.diff = diff
+        self.init(
+            rows: .raw(diff.lines),
+            gutterActions: gutterActions,
+            reviewNotes: reviewNotes,
+            reserveNoteColumn: reserveNoteColumn,
+            compactGutterWidth: compactGutterWidth,
+            showsChangeMarkers: showsChangeMarkers,
+            onExpandContext: onExpandContext,
+            resetSelectionGeneration: resetSelectionGeneration,
+            contentGeneration: contentGeneration,
+            reviewStateGeneration: reviewStateGeneration,
+            revealFeedback: revealFeedback,
+            onContentHeightChanged: onContentHeightChanged
+        )
+    }
+
+    public init(
+        displayLines: [DiffLine],
+        displayGroups: [ChangeGroup],
+        gutterActions: (any DiffGutterContextActions)? = nil,
+        reviewNotes: [DiffReviewNoteSummary] = [],
+        reserveNoteColumn: Bool = false,
+        compactGutterWidth: Bool = false,
+        showsChangeMarkers: Bool = false,
+        onExpandContext: ((ContextExpansionRequest) -> Void)? = nil,
+        resetSelectionGeneration: UInt64 = 0,
+        contentGeneration: UInt64? = nil,
+        reviewStateGeneration: UInt64 = 0,
+        revealFeedback: ContextExpansionReveal? = nil,
+        onContentHeightChanged: ((CGFloat) -> Void)? = nil
+    ) {
+        self.init(
+            rows: .display(displayLines, groups: displayGroups),
+            gutterActions: gutterActions,
+            reviewNotes: reviewNotes,
+            reserveNoteColumn: reserveNoteColumn,
+            compactGutterWidth: compactGutterWidth,
+            showsChangeMarkers: showsChangeMarkers,
+            onExpandContext: onExpandContext,
+            resetSelectionGeneration: resetSelectionGeneration,
+            contentGeneration: contentGeneration,
+            reviewStateGeneration: reviewStateGeneration,
+            revealFeedback: revealFeedback,
+            onContentHeightChanged: onContentHeightChanged
+        )
+    }
+
+    private init(
+        rows: Rows,
+        gutterActions: (any DiffGutterContextActions)?,
+        reviewNotes: [DiffReviewNoteSummary],
+        reserveNoteColumn: Bool,
+        compactGutterWidth: Bool,
+        showsChangeMarkers: Bool,
+        onExpandContext: ((ContextExpansionRequest) -> Void)?,
+        resetSelectionGeneration: UInt64,
+        contentGeneration: UInt64?,
+        reviewStateGeneration: UInt64,
+        revealFeedback: ContextExpansionReveal?,
+        onContentHeightChanged: ((CGFloat) -> Void)?
+    ) {
+        self.rows = rows
         self.gutterActions = gutterActions
         self.reviewNotes = reviewNotes
-        self.displayLines = displayLines
-        self.displayGroups = displayGroups
         self.reserveNoteColumn = reserveNoteColumn
         self.compactGutterWidth = compactGutterWidth
         self.showsChangeMarkers = showsChangeMarkers

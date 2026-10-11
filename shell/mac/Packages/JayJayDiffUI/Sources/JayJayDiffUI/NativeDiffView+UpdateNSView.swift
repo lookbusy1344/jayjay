@@ -52,7 +52,10 @@ public extension NativeDiffView {
 
         textView.applyFindSelectionColors(theme)
         let viewportAnchor = containerView.captureViewportAnchor()
-        let displayLines = displayLines ?? diffDisplayLines(lines: diff.lines)
+        let (displayLines, precomputedGroups): ([DiffLine], [ChangeGroup]?) = switch rows {
+            case let .raw(lines): (diffDisplayLines(lines: lines), nil)
+            case let .display(lines, groups): (lines, groups)
+        }
 
         let gutterParagraphStyle = NSMutableParagraphStyle()
         let showsLineCheckboxes = selectionActions != nil
@@ -67,7 +70,7 @@ public extension NativeDiffView {
         ]
 
         var groupIndexAtLineNumber: [Int: UInt32] = [:]
-        let groups = displayGroups ?? changeGroups(lines: displayLines)
+        let groups = precomputedGroups ?? changeGroups(lines: displayLines)
         let groupsByIndex = Dictionary(uniqueKeysWithValues: groups.map { ($0.index, $0) })
         for group in groups {
             for lineNumber in Int(group.startLine) ... Int(group.endLine) {
@@ -158,7 +161,7 @@ public extension NativeDiffView {
             )
         }
 
-        if diff.lines.isEmpty {
+        if displayLines.isEmpty {
             result.append(NSAttributedString(
                 string: "No differences",
                 attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]

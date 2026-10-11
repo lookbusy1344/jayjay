@@ -12,16 +12,40 @@ extension DiffStore {
         )
     }
 
-    func loadFileContent(
-        repo: JayJayRepo,
+    /// The repository read for `hunk`; nil without a revision.
+    nonisolated static func loadRequest(
         hunk: DiffHunk,
         rev: String?,
         fromRev: String?,
-        projectionMode: DiffProjectionMode?
-    ) async -> DiffLoadedContent {
-        await (try? Self.fetchContent(
-            repo: repo, hunk: hunk, rev: rev, fromRev: fromRev, projectionMode: projectionMode
-        )) ?? DiffLoadedContent(oldContent: "", newContent: "")
+        projectionMode: DiffProjectionMode?,
+        ignoreWhitespace: Bool
+    ) -> DiffLoadRequest? {
+        let raw = effectiveProjectionMode(hunk: hunk, mode: projectionMode) == .raw
+        return rev.map { rev in
+            DiffLoadRequest(
+                rev: rev, fromRev: fromRev, path: hunk.path, oldPath: hunk.oldPath,
+                hunkType: hunk.hunkType, projectionMode: raw ? .raw : .processed,
+                ignoreWhitespace: ignoreWhitespace
+            )
+        }
+    }
+
+    /// Errors leave an empty diff, as an unreadable file shows no rows.
+    nonisolated static func loadFromRepo(
+        repo: JayJayRepo,
+        request: DiffLoadRequest?,
+        hunk: DiffHunk,
+        ignoreWhitespace: Bool
+    ) -> LoadedDiff {
+        if let request, let loaded = try? repo.loadDiff(request: request) {
+            return loaded
+        }
+        let empty = DiffHunk(
+            path: hunk.path, oldPath: hunk.oldPath, oldContent: "", newContent: "",
+            oldPreview: nil, newPreview: nil, hunkType: hunk.hunkType,
+            reviewIdentity: hunk.reviewIdentity, projection: nil
+        )
+        return LoadedDiff.fromHunk(hunk: empty, ignoreWhitespace: ignoreWhitespace)
     }
 
     private static func fetchContent(
@@ -80,15 +104,6 @@ extension DiffStore {
     private static func loadedContent(
         loading: @escaping () throws -> DiffHunk
     ) async throws -> DiffLoadedContent {
-        let hunk = try await Task.detached { try loading() }.value
-        // Absent sides stay nil: core's staleness guard materializes them as None, and Some("") would abort the apply as stale.
-        return DiffLoadedContent(
-            oldContent: hunk.oldContent,
-            newContent: hunk.newContent,
-            oldPreview: hunk.oldPreview,
-            newPreview: hunk.newPreview,
-            projection: hunk.projection,
-            supportsFileEditor: hunk.supportsFileEditor
-        )
+        try await DiffLoadedContent(Task.detached { try loading() }.value)
     }
 }
