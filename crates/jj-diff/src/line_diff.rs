@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use similar::{DiffTag, capture_diff_slices};
 
+use crate::histogram_stack::with_histogram_stack;
+
 /// Line-level diff operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LineOp {
@@ -16,7 +18,10 @@ pub(super) fn line_diff(old: &str, new: &str, ignore_whitespace: bool) -> Vec<Li
     let old = line_tokens(old, ignore_whitespace);
     let new = line_tokens(new, ignore_whitespace);
     let mut ops = Vec::with_capacity(old.len().max(new.len()));
-    for op in capture_diff_slices(crate::DIFF_ALGORITHM, &old, &new) {
+    let diff = with_histogram_stack(old.len().min(new.len()), || {
+        capture_diff_slices(crate::DIFF_ALGORITHM, &old, &new)
+    });
+    for op in diff {
         let (tag, old_range, new_range) = op.as_tag_tuple();
         match tag {
             DiffTag::Equal => ops.extend(old_range.map(|_| LineOp::Equal)),

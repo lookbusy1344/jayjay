@@ -11,6 +11,7 @@ mod expand;
 mod expand_session;
 mod highlight;
 mod highlights;
+mod histogram_stack;
 mod line_diff;
 pub mod placeholders;
 mod render_highlights;

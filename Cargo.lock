@@ -4505,6 +4505,7 @@ dependencies = [
  "hotpath",
  "sha2 0.11.1",
  "similar",
+ "stacker",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-batch",
