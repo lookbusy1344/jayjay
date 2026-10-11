@@ -1,13 +1,13 @@
 use std::mem::size_of;
 
 use jayjay_primitives::{DiffContent, DiffHunk, HunkType};
-use jj_diff::DiffSpanStyle;
+use jj_diff::{DiffSpanStyle, ReviewGroupFingerprint};
 
 use super::LoadedDiff;
 use super::packed::{PackedRow, PackedSpan};
 
 #[test]
-fn retained_bytes_count_texts_span_text_and_packed_metadata() {
+fn retained_bytes_count_texts_span_text_packed_metadata_and_review_state() {
     let hunk = DiffHunk {
         path: "a.txt".into(),
         old_path: None,
@@ -23,8 +23,17 @@ fn retained_bytes_count_texts_span_text_and_packed_metadata() {
     let loaded = LoadedDiff::from_hunk(hunk, false);
 
     // Texts 0 + 5 bytes; two added rows "a" and "bc", one unhighlighted span each.
-    let expected = 5 + (1 + 2) + 2 * size_of::<PackedRow>() + 2 * size_of::<PackedSpan>();
-    assert_eq!(loaded.retained_bytes(), expected as u64);
+    let diff = 5 + (1 + 2) + 2 * size_of::<PackedRow>() + 2 * size_of::<PackedSpan>();
+    // One change group: a 64-hex-char SHA-256 digest, and one display group mapped to one canonical index.
+    let review =
+        size_of::<ReviewGroupFingerprint>() + 64 + size_of::<Vec<u32>>() + size_of::<u32>();
+    assert_eq!(
+        loaded
+            .review()
+            .map(|review| review.snapshot.fingerprints.len()),
+        Some(1)
+    );
+    assert_eq!(loaded.retained_bytes(), (diff + review) as u64);
 }
 
 #[test]
