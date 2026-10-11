@@ -8,9 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use jayjay_core::diff::{
-    self, ContextExpansionFinish, ContextExpansionRequest, ContextExpansionSession,
-};
+use jayjay_core::diff::{ContextExpansionFinish, ContextExpansionRequest, ContextExpansionSession};
 use jayjay_core::{DiffHunk, DiffLoadRequest, DiffProjectionMode, LoadedDiff, Repo};
 use jayjay_uniffi::{LoadedDiffFlags, UniFfiTag};
 use jj_test::ffi_bench::BenchScenario;
@@ -207,16 +205,16 @@ fn open_file(ledger: &mut Ledger, repo: &Repo, rev: &str, hunk: &DiffHunk) {
     read_display_rows(ledger, &loaded);
 }
 
-/// `SideBySideCoordinator`: rows once per diff, then `wrapSbsRows` per width change.
+/// `SideBySideCoordinator`: rows once per diff, then `sideBySideLayout` per width change.
 fn sbs_sweep(ledger: &mut Ledger, loaded: &LoadedDiff, widths: &[u32]) {
     ledger.call("LoadedDiff.sideBySideRows");
     let rows = ledger.rust(|| loaded.side_by_side_rows());
-    let rows = ledger.ret(rows);
+    ledger.ret(rows);
     for &cols in widths {
-        ledger.call("wrapSbsRows");
-        let rows = ledger.arg(rows.clone());
-        let wrapped = ledger.rust(|| diff::wrap_sbs_rows(&rows, cols, cols, NO_MOVED_LABEL_COLS));
-        ledger.ret(wrapped);
+        ledger.call("LoadedDiff.sideBySideLayout");
+        let cols = ledger.arg(cols);
+        let layout = ledger.rust(|| loaded.side_by_side_layout(cols, cols, NO_MOVED_LABEL_COLS));
+        ledger.ret(layout);
     }
 }
 

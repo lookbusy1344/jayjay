@@ -43,7 +43,7 @@ public struct SideBySideRepresentable: NSViewRepresentable {
         (right.textView as? DiffTextView)?.findPartner = left.textView as? DiffTextView
         left.textView.delegate = context.coordinator
         right.textView.delegate = context.coordinator
-        // We pre-wrap rows in Rust via `wrapSbsRows` so each visual row is shorter
+        // We pre-wrap rows in Rust via `sideBySideLayout` so each visual row is shorter
         // than the pane's column count. The NSTextContainer therefore should NOT
         // wrap on its own — that would re-wrap the pre-wrapped row and desync the panes.
         left.wrapsText = false

@@ -102,7 +102,7 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
     }
 
     func renderIfNeeded() {
-        guard diff != nil,
+        guard let diff,
               let font,
               let theme,
               let left = leftContainer?.paneViews(),
@@ -147,7 +147,8 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
             .max() ?? 0
         let movedLabelCols = UInt32(ceil(Float(reservedWidth) / advance))
         let wrapped = SideBySideRowSource.visualRows(
-            rows: rows, oldCols: oldCols, newCols: newCols, movedLabelCols: movedLabelCols
+            rows: rows,
+            layout: diff.sideBySideLayout(oldCols: oldCols, newCols: newCols, movedLabelCols: movedLabelCols)
         )
         (left.textView as? DiffTextView)?.copyRows = DiffCopyRow.rows(wrapped, side: \.old)
         (right.textView as? DiffTextView)?.copyRows = DiffCopyRow.rows(wrapped, side: \.new)

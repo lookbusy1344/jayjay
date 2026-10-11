@@ -3,8 +3,9 @@ use std::sync::Arc;
 use jayjay_primitives::{DiffContent, DiffHunk};
 use jj_diff::{
     ChangeGroup, ConflictLineKind, ContextExpansionSource, DiffLine, DiffSpanStyle, FileDiff,
-    ReviewDisplayParts, SideBySideRow, build_diff_display_lines, build_side_by_side_rows,
-    change_groups, compute_file_diff, review_display_parts,
+    ReviewDisplayParts, SbsVisualLine, SideBySideRow, build_diff_display_lines,
+    build_side_by_side_rows, change_groups, compute_file_diff, review_display_parts,
+    wrap_sbs_layout,
 };
 
 use super::packed::PackedDiff;
@@ -111,6 +112,21 @@ impl LoadedDiff {
 
     pub fn side_by_side_rows(&self) -> Vec<SideBySideRow> {
         build_side_by_side_rows(&self.diff.unpack().lines)
+    }
+
+    /// Visual lines of `side_by_side_rows` wrapped to the pane widths, with `moved_label_cols` reserved on each moved block's first row.
+    pub fn side_by_side_layout(
+        &self,
+        old_cols: u32,
+        new_cols: u32,
+        moved_label_cols: u32,
+    ) -> Vec<SbsVisualLine> {
+        wrap_sbs_layout(
+            &self.side_by_side_rows(),
+            old_cols,
+            new_cols,
+            moved_label_cols,
+        )
     }
 
     pub fn whitespace_only_hidden(&self) -> bool {

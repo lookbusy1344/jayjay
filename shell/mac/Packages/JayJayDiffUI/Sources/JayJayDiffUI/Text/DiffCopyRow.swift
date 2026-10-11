@@ -7,7 +7,7 @@ enum DiffCopyRow {
     case wrapped
     case padding
 
-    static func rows(_ wrapped: [WrappedSbsRow], side: KeyPath<SideBySideRow, RowSide>) -> [DiffCopyRow] {
+    static func rows(_ wrapped: [(rowIx: Int, row: SideBySideRow)], side: KeyPath<SideBySideRow, RowSide>) -> [DiffCopyRow] {
         wrapped.indices.map { ix in
             let row = wrapped[ix]
             guard !row.row.fullWidth else { return .line }

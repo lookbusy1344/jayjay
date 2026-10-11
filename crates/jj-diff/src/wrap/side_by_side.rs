@@ -7,7 +7,7 @@ use super::cols::cols_for;
 use super::types::{WrappedSbsRow, WrappedSide};
 use crate::conflicts::{build_diff_display_items, build_diff_display_lines};
 use crate::side_by_side::{RowSide, SideBySideRow};
-use crate::types::{DiffDisplayItem, DiffLine, DiffSpan, DiffSpanStyle};
+use crate::types::{DiffDisplayItem, DiffLine, DiffSide, DiffSpan, DiffSpanStyle};
 
 /// Wrap SBS rows, padding the shorter side so both panes advance in lock-step. `moved_label_cols` reserves the shell-measured jump-label width; pass zero when no labels are rendered.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
@@ -196,7 +196,10 @@ fn wrap_full_width_row(
     new_cols: usize,
     wrapped: &mut Vec<WrappedSbsRow>,
 ) {
-    let source = full_width_source(row);
+    let source = match full_width_source(row) {
+        DiffSide::Old => &row.old,
+        DiffSide::New => &row.new,
+    };
     let len = spans_char_len(&source.spans);
     let cols = old_cols.saturating_add(new_cols).max(1);
     let chunks = side_chunks(&source.spans, cols);
@@ -218,11 +221,12 @@ fn wrap_full_width_row(
     }
 }
 
-fn full_width_source(row: &SideBySideRow) -> &RowSide {
+/// The side a full-width row draws its text from.
+pub(super) fn full_width_source(row: &SideBySideRow) -> DiffSide {
     if row.new.conflict_kind != crate::types::ConflictLineKind::None || !row.new.spans.is_empty() {
-        &row.new
+        DiffSide::New
     } else {
-        &row.old
+        DiffSide::Old
     }
 }
 

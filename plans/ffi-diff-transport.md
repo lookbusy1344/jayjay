@@ -138,7 +138,7 @@ Conclusion from the baseline: the FFI work is still worth doing.
 - Phase 1 removes most Swift-side marshalling for `preload` (1,193 ms Swift vs 177 ms Rust) and `expand_context` (122 ms vs 6 ms). For `open dense` the cost is Rust compute, mainly review fingerprints re-diffing twice (about 1.5 s of 1.8 s); compute once.
 - Phase 3 stays conditional.
 
-Next step: Phase 2, starting with its failing tests. Phase 1 is `wuzrtlqo`; see Results.
+Next step: decide Phase 3 from the Phase 2 numbers. Phase 1 is `wuzrtlqo`, Phase 2 its child; see Results.
 
 Open items:
 - Stack fix: WASM build unverified (`rustup target add wasm32-unknown-unknown`, `rustup component add llvm-tools`, `just test-wasm`). Files with more than about 45,000 separate change blocks can still overflow the 32 MiB cap. The word diff may allocate a grown stack per long changed line; growing once per file avoids that. Not measured.
@@ -352,6 +352,20 @@ Exit criteria: `preload many` −78 % and `expand_context sparse` −49 % in tim
 Decision (2026-10-11): accept Phase 1 with the 8 % retained-memory rise and proceed to Phase 2. Fetching texts from the handle on demand (SVG, Markdown and HTML previews, diff edit, Abandon Selected Lines) would remove the Swift copy; it stays open as a follow-up.
 
 Not yet run on Phase 1: UI tests, `just test-wasm`, full Rust and app suites, `jj fix`, `just lint`, review triage. Abandon Selected Lines has no regression test for the display-row mapping.
+
+### Phase 2 (2026-10-11, on top of Phase 1)
+
+Design as built:
+- `wrap_sbs_layout` (`jj-diff/src/wrap/layout.rs`) returns one `SbsVisualLine { row_ix, old, new, full_width_source }` per visual line, with UTF-16 ranges into the row text. It maps the cell ranges `wrap_sbs_rows` computes, so the two cannot diverge. Full-width rows name the side both ranges index.
+- `LoadedDiff.sideBySideLayout(oldCols:newCols:)` rebuilds rows from the packed diff and wraps them per call. Swift fetches rows once per handle and slices them by the ranges (`SideBySideRowSource.visualRows(rows:layout:)`).
+- The layout call stays synchronous on the main thread; async with a generation token is not done.
+
+Rust replay, `just bench-wire sbs` (20 widths): dense 0.00 MiB → Rust, 8.22 MiB → Swift (2.93 of it the rows, once), 505 ms Rust; wide 0.00 / 2.84 MiB, 341 ms.
+
+Swift, `just bench-ffi`, per width change: dense 45.8 ms (3 runs), wide 24.8 ms (6 runs), no retained memory.
+
+Remaining cost is Rust: about 25 ms per width on dense, from unpacking, rebuilding rows and allocating wrapped spans that the layout discards. A geometry-only chunk walk, or rows cached on the handle while side-by-side is shown, would remove most of it; moving the call off the main thread would hide the rest.
+
 
 ## Risks
 
