@@ -70,7 +70,9 @@ final class DiffFFIBenchmarks: XCTestCase {
         try await bench("resize_sbs (per width)", scenario, iterations: Self.sbsWidths.count * 2) {
             var rowCount = 0
             for cols in Self.sbsWidths + Self.sbsWidths.reversed() {
-                rowCount += SideBySideRowSource.visualRows(rows: rows, oldCols: cols, newCols: cols).count
+                rowCount += SideBySideRowSource.visualRows(
+                    rows: rows, layout: cached.loaded.sideBySideLayout(oldCols: cols, newCols: cols)
+                ).count
             }
             return rowCount
         }

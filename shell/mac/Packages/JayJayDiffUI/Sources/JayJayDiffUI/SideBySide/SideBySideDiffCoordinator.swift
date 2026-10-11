@@ -100,7 +100,7 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
     }
 
     func renderIfNeeded() {
-        guard diff != nil,
+        guard let diff,
               let font,
               let theme,
               let left = leftContainer?.paneViews(),
@@ -132,7 +132,10 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
         guard inputs != lastRenderInputs else { return }
         lastRenderInputs = inputs
 
-        let visualRows = SideBySideRowSource.visualRows(rows: rows, oldCols: oldCols, newCols: newCols)
+        let visualRows = SideBySideRowSource.visualRows(
+            rows: rows,
+            layout: diff.sideBySideLayout(oldCols: oldCols, newCols: newCols)
+        )
         renderVisualRows(visualRows, font: font, theme: theme, left: left, right: right)
     }
 
