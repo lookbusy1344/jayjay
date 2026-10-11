@@ -5,7 +5,7 @@ import SwiftUI
 public struct SideBySideRepresentable: NSViewRepresentable {
     public typealias Coordinator = SideBySideCoordinator
 
-    public let diff: FileDiff
+    public let diff: LoadedDiff
     public var onExpandContext: ((ContextExpansionRequest) -> Void)?
     public var resetSelectionGeneration: UInt64
     public var revealFeedback: ContextExpansionReveal?
@@ -16,7 +16,7 @@ public struct SideBySideRepresentable: NSViewRepresentable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(
-        diff: FileDiff,
+        diff: LoadedDiff,
         onExpandContext: ((ContextExpansionRequest) -> Void)? = nil,
         resetSelectionGeneration: UInt64 = 0,
         revealFeedback: ContextExpansionReveal? = nil

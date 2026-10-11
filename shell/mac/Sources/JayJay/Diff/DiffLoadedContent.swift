@@ -34,6 +34,16 @@ struct DiffLoadedContent {
         )
     }
 
+    /// Absent sides stay nil: core's staleness guard materializes them as None, and Some("") would abort the apply as stale.
+    init(_ hunk: DiffHunk) {
+        self.init(
+            old: hunk.old,
+            new: hunk.new,
+            projection: hunk.projection,
+            supportsFileEditor: hunk.supportsFileEditor
+        )
+    }
+
     var oldContent: String? {
         old.content
     }
@@ -57,47 +67,31 @@ struct DiffLoadedContent {
     var newText: String {
         new.content ?? ""
     }
-
-    /// The summary hunk with this loaded content filled in, so core decides review-snapshot eligibility from one place.
-    nonisolated func applied(to hunk: DiffHunk) -> DiffHunk {
-        DiffHunk(
-            path: hunk.path,
-            oldPath: hunk.oldPath,
-            old: old,
-            new: new,
-            hunkType: hunk.hunkType,
-            supportsConflictEditor: hunk.supportsConflictEditor,
-            supportsFileEditor: hunk.supportsFileEditor,
-            reviewIdentity: hunk.reviewIdentity,
-            projection: projection,
-            matchesSource: hunk.matchesSource
-        )
-    }
 }
 
 struct DiffSectionLoadedDiff {
     var path: String
-    var fileDiff: FileDiff?
-    var displayLines: [DiffLine]?
-    var displayGroups: [ChangeGroup]?
+    /// Absent for placeholders, which render `content` alone.
+    var diff: DiffStore.CachedDiff?
+    var rows: DisplayRows?
     var content: DiffLoadedContent
     var basis: String?
     var reviewQuery: ReviewDisplayQuery?
 
-    nonisolated func withReviewFingerprints(hunk: DiffHunk, ignoreWhitespace: Bool) -> DiffSectionLoadedDiff {
-        var copy = self
-        let loaded = content.applied(to: hunk)
-        let snapshot = reviewSnapshotFromDiffHunk(hunk: loaded)
-        guard !snapshot.fingerprints.isEmpty else {
-            copy.reviewQuery = nil
-            return copy
+    init(placeholder content: DiffLoadedContent, path: String) {
+        self.path = path
+        self.content = content
+    }
+
+    /// Reads the display rows across the FFI; call off the main thread.
+    init(_ diff: DiffStore.CachedDiff, path: String, basis: String, hunk: DiffHunk) {
+        self.path = path
+        self.diff = diff
+        rows = diff.loaded.displayRows()
+        content = diff.content
+        self.basis = basis
+        reviewQuery = diff.review.map {
+            ReviewDisplayQuery(path: hunk.path, identity: hunk.reviewIdentity, snapshot: $0.snapshot, mapping: $0.groupMap)
         }
-        copy.reviewQuery = ReviewDisplayQuery(
-            path: hunk.path,
-            identity: hunk.reviewIdentity,
-            snapshot: snapshot,
-            mapping: reviewDisplayGroupMapFromDiffHunk(hunk: loaded, ignoreWhitespace: ignoreWhitespace)
-        )
-        return copy
     }
 }

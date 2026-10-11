@@ -7,35 +7,28 @@ extension DiffSection {
     }
 
     func expandAllContext() {
-        guard loadedDiff?.fileDiff?.lines.contains(where: { $0.contextRegion != nil }) == true else { return }
+        guard renderedDiff?.flags.hasContextRegions == true else { return }
         expandContext(.allRegions)
     }
 
     func expandContext(_ request: ContextExpansionRequest) {
         guard let current = loadedDiff,
-              let diff = current.fileDiff,
+              let diff = current.diff,
               let basis = current.basis,
               let attempt = contextExpansion.begin(basis: basis, request: request)
         else { return }
-        let source = attempt.needsSource()
-            ? ContextExpansionSource(
-                diff: diff,
-                oldContent: current.content.oldText,
-                newContent: current.content.newText
-            )
-            : nil
         let session = contextExpansion
         let generation = attempt.generation()
 
         Task {
             let expanded = await Task.detached(priority: .userInitiated) {
-                attempt.run(source: source)
+                attempt.run(base: diff.loaded)
             }.value
             guard let outcome = expanded else { return }
 
             let currentBasis = contextExpansionBasis
             let prepared = await Task.detached(priority: .userInitiated) {
-                PreparedContextExpansion(session.finish(basis: currentBasis ?? "", outcome: outcome))
+                PreparedContextExpansion(session.finish(basis: currentBasis ?? "", outcome: outcome), content: diff.content)
             }.value
             guard session.isCurrent(basis: contextExpansionBasis ?? "", generation: generation) else { return }
             install(prepared)
@@ -46,11 +39,10 @@ extension DiffSection {
         switch prepared.finish {
             case .discarded:
                 break
-            case let .applied(diff, reveal, selectionGeneration, next):
-                guard var current = loadedDiff else { return }
-                current.fileDiff = diff
-                current.displayLines = prepared.displayLines
-                current.displayGroups = prepared.displayGroups
+            case let .applied(_, reveal, selectionGeneration, next):
+                guard var current = loadedDiff, let expanded = prepared.diff else { return }
+                current.diff = expanded
+                current.rows = prepared.rows
                 selectedLineRange = nil
                 loadedDiff = current
                 contextExpansionDisplay.errorMessage = nil
@@ -72,21 +64,20 @@ extension DiffSection {
     }
 }
 
-/// The core outcome with its display projection, both built off the main thread because each is O(diff bytes).
+/// The core outcome with its rows read across the FFI off the main thread, since they are O(diff bytes).
 private struct PreparedContextExpansion: Sendable {
     let finish: ContextExpansionFinish
-    let displayLines: [DiffLine]
-    let displayGroups: [ChangeGroup]
+    let diff: DiffStore.CachedDiff?
+    let rows: DisplayRows?
 
-    init(_ finish: ContextExpansionFinish) {
+    init(_ finish: ContextExpansionFinish, content: DiffLoadedContent) {
         self.finish = finish
-        guard case let .applied(diff, _, _, _) = finish else {
-            displayLines = []
-            displayGroups = []
+        guard case let .applied(loaded, _, _, _) = finish else {
+            diff = nil
+            rows = nil
             return
         }
-        let lines = diffDisplayLines(lines: diff.lines)
-        displayLines = lines
-        displayGroups = changeGroups(lines: lines)
+        diff = DiffStore.CachedDiff(loaded: loaded, content: content)
+        rows = loaded.displayRows()
     }
 }

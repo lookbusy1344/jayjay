@@ -4,13 +4,13 @@ import SwiftUI
 
 /// GitHub Desktop-style two-column diff: left = old, right = new, synced scroll.
 public struct SideBySideDiffView: View {
-    public let diff: FileDiff
+    public let diff: LoadedDiff
     public var onExpandContext: ((ContextExpansionRequest) -> Void)?
     public var resetSelectionGeneration: UInt64
     public var revealFeedback: ContextExpansionReveal?
 
     public init(
-        diff: FileDiff,
+        diff: LoadedDiff,
         onExpandContext: ((ContextExpansionRequest) -> Void)? = nil,
         resetSelectionGeneration: UInt64 = 0,
         revealFeedback: ContextExpansionReveal? = nil

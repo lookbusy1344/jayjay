@@ -43,7 +43,7 @@ pub struct ChangeGroup {
     pub anchor_context: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffSpan {
     pub text: String,
     pub style: DiffSpanStyle,
@@ -51,7 +51,7 @@ pub struct DiffSpan {
     pub tooltip: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
     pub old_line_no: Option<u32>,
     pub new_line_no: Option<u32>,

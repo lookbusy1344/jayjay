@@ -67,7 +67,13 @@ final class NSTextStorageReplacementTests: XCTestCase {
     }
 
     private func makePane() -> DiffTextContainerView {
-        let diff = FileDiff(path: "test.rs", language: "rust", lines: [], whitespaceOnlyHidden: false)
+        let diff = LoadedDiff.fromHunk(
+            hunk: DiffHunk(
+                path: "test.rs", oldPath: nil, oldContent: "", newContent: "",
+                oldPreview: nil, newPreview: nil, hunkType: .modified, reviewIdentity: "", projection: nil
+            ),
+            ignoreWhitespace: false
+        )
         return SideBySideRepresentable(diff: diff).makeContainer()
     }
 }

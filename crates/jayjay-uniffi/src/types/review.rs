@@ -1,4 +1,4 @@
-use jayjay_core::diff::{ReviewFileSnapshot, ReviewGroupFingerprint};
+use jayjay_core::diff::{ReviewDisplayParts, ReviewFileSnapshot, ReviewGroupFingerprint};
 use jayjay_primitives as primitives;
 use jayjay_primitives::{
     NoteAnchor, NoteEntry, NoteSide, NoteStatus, ReviewFileRollup, ReviewGroupState,
@@ -81,6 +81,12 @@ pub struct ReviewGroupFingerprint {
 pub struct ReviewFileSnapshot {
     pub algorithm_version: u32,
     pub fingerprints: Vec<jayjay_core::diff::ReviewGroupFingerprint>,
+}
+
+#[uniffi::remote(Record)]
+pub struct ReviewDisplayParts {
+    pub snapshot: jayjay_core::diff::ReviewFileSnapshot,
+    pub group_map: Vec<Vec<u32>>,
 }
 
 #[uniffi::remote(Record)]

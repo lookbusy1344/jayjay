@@ -12,9 +12,9 @@ extension DiffSection: DiffGutterEditActions {
     }
 
     var canAbandonSelectedLines: Bool {
-        guard isWorkingCopy, hunk.projection == nil, !hunk.hunkType.hasSource, let fileDiff else { return false }
+        guard isWorkingCopy, hunk.projection == nil, !hunk.hunkType.hasSource, let renderedDiff else { return false }
         // Conflicts materialize as marker text the core partitioner would treat as literal content; the core guard rejects them, so hide the action like the GPUI shell instead of offering an error.
-        return !fileDiff.lines.contains { $0.conflictKind != .none }
+        return !renderedDiff.flags.hasConflicts
     }
 
     var canEditFile: Bool {
@@ -49,13 +49,13 @@ extension DiffSection: DiffGutterEditActions {
         guard let actions,
               let repo,
               let rev,
-              let fileDiff
+              let displayLines = loadedDisplayLines
         else { return }
 
         let oldContent = loadedOldContent ?? hunk.oldContent
         let newContent = loadedNewContent ?? hunk.newContent
         let selectedKeys: Set<String> = Set(
-            fileDiff.lines.enumerated().compactMap { index, line in
+            displayLines.enumerated().compactMap { index, line in
                 let displayLine = index + 1
                 guard lineRange.contains(displayLine),
                       line.style == .added || line.style == .removed

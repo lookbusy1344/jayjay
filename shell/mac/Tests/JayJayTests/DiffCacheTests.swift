@@ -93,6 +93,19 @@ final class DiffCacheTests: XCTestCase {
         XCTAssertNotNil(keptC)
     }
 
+    func testBudgetCountsTheRetainedDiffNotJustItsTexts() async {
+        // Two 100-byte files: their texts alone fit 300 bytes; with their rows and Rust-side copies they do not.
+        let text = String(repeating: "xxxxxxxxx\n", count: 10)
+        let cache = DiffCache(budgetBytes: 300)
+        await cache.set("old", value: entry(newText: text))
+        await cache.set("new", value: entry(newText: text))
+
+        let evicted = await cache.get("old")
+        let kept = await cache.get("new")
+        XCTAssertNil(evicted)
+        XCTAssertNotNil(kept)
+    }
+
     func testKeepsSingleEntryLargerThanBudget() async {
         let cache = DiffCache(budgetBytes: 100)
         await cache.set("big", value: entry(bytes: 500))
@@ -104,12 +117,16 @@ final class DiffCacheTests: XCTestCase {
 
     private func entry(bytes: Int) -> DiffStore.CachedDiff {
         DiffStore.CachedDiff(
-            diff: FileDiff(path: "f", language: "", lines: [], whitespaceOnlyHidden: false),
-            content: DiffLoadedContent(
-                oldContent: "",
-                newContent: String(repeating: "x", count: bytes)
-            )
+            loaded: LoadedDiff.fromHunk(hunk: testHunk(projection: nil), ignoreWhitespace: false),
+            content: DiffLoadedContent(oldContent: "", newContent: String(repeating: "x", count: bytes))
         )
+    }
+
+    private func entry(newText: String) -> DiffStore.CachedDiff {
+        DiffStore.CachedDiff(LoadedDiff.fromHunk(
+            hunk: testHunk(path: "f.txt", newContent: newText),
+            ignoreWhitespace: false
+        ))
     }
 
     private func plainHunk() -> DiffHunk {

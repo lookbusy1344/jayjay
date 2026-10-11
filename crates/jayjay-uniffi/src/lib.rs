@@ -18,6 +18,7 @@ mod fonts;
 mod forge;
 mod fuzzy;
 mod github_alias;
+mod loaded_diff;
 #[cfg(feature = "desktop")]
 mod log_file;
 mod markdown;
@@ -45,6 +46,7 @@ pub use error::*;
 pub use file_tree::*;
 pub use fonts::*;
 pub use fuzzy::*;
+pub use loaded_diff::*;
 pub use markdown::*;
 pub use network::*;
 pub use palette::*;

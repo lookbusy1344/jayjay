@@ -7,7 +7,7 @@ use jayjay_review::{ReviewStore, change_group_index};
 use serde::Serialize;
 
 use super::review_note_output::{ReviewOutputFormat, canonicalize, open_repo};
-use super::review_snapshot::{review_display_group_map_from_hunk, review_snapshot_from_hunk};
+use crate::review_snapshot::{review_display_group_map_from_hunk, review_snapshot_from_hunk};
 use crate::types::*;
 
 #[derive(Serialize)]

@@ -54,6 +54,26 @@ pub fn display_group_canonical_indices(
     map_display_groups_to_canonical(&canonical.lines, &display_lines)
 }
 
+/// A rendered diff's review state: the canonical snapshot and, per display change group, the canonical groups it overlaps.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReviewDisplayParts {
+    pub snapshot: ReviewFileSnapshot,
+    pub group_map: Vec<Vec<u32>>,
+}
+
+/// Snapshot and group map from one canonical diff; `display_lines` are the rendered rows of the same text pair.
+pub fn review_display_parts(
+    old: &str,
+    new: &str,
+    display_lines: &[DiffLine],
+) -> ReviewDisplayParts {
+    let canonical = compute_file_diff_full_plain("", old, new, false);
+    ReviewDisplayParts {
+        snapshot: fingerprint_snapshot(old, new, &canonical.lines),
+        group_map: map_display_groups_to_canonical(&canonical.lines, display_lines),
+    }
+}
+
 pub(crate) fn map_display_groups_to_canonical(
     canonical_lines: &[DiffLine],
     display_lines: &[DiffLine],

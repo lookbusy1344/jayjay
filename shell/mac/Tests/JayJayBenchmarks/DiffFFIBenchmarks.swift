@@ -58,9 +58,7 @@ final class DiffFFIBenchmarks: XCTestCase {
             for hunk in hunks {
                 let loaded = await store.loadDiff(hunk: hunk, rev: Self.rev(scenario), repo: Self.repo)
                 let cached = try XCTUnwrap(loaded)
-                await prepared.append(DiffSection.prepareLoadedDiff(
-                    cached, path: hunk.path, basis: scenario, hunk: hunk, ignoreWhitespace: false
-                ))
+                prepared.append(DiffSectionLoadedDiff(cached, path: hunk.path, basis: scenario, hunk: hunk))
             }
             return (store, prepared)
         }
@@ -69,10 +67,10 @@ final class DiffFFIBenchmarks: XCTestCase {
     private func resizeSideBySide(_ scenario: String) async throws {
         let hunk = try XCTUnwrap(hunks(scenario).first)
         let cached = try await Self.load(hunk, scenario)
+        let rows = cached.loaded.sideBySideRows()
         try await bench("resize_sbs (per width)", scenario, iterations: Self.sbsWidths.count * 2) {
             var rowCount = 0
             for cols in Self.sbsWidths + Self.sbsWidths.reversed() {
-                let rows = buildSideBySideRows(lines: cached.diff.lines)
                 rowCount += SideBySideRowSource.visualRows(rows: rows, oldCols: cols, newCols: cols, movedLabelCols: Self.noMovedLabelCols).count
             }
             return rowCount
@@ -86,14 +84,11 @@ final class DiffFFIBenchmarks: XCTestCase {
         try await bench("expand_context", scenario) {
             let session = ContextExpansionSession()
             let attempt = try XCTUnwrap(session.begin(basis: Self.expansionBasis, request: .allRegions))
-            let outcome = try XCTUnwrap(attempt.run(source: ContextExpansionSource(
-                diff: cached.diff, oldContent: cached.oldContent, newContent: cached.newContent
-            )))
+            let outcome = try XCTUnwrap(attempt.run(base: cached.loaded))
             guard case let .applied(diff, _, _, _) = session.finish(basis: Self.expansionBasis, outcome: outcome) else {
                 throw XCTSkip("expansion was not applied")
             }
-            let lines = diffDisplayLines(lines: diff.lines)
-            return (lines, changeGroups(lines: lines))
+            return (DiffStore.CachedDiff(loaded: diff, content: cached.content), diff.displayRows())
         }
     }
 

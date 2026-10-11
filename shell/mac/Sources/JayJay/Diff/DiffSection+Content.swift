@@ -67,16 +67,16 @@ extension DiffSection {
             richPreviewWithGutter {
                 HTMLDiffView(location: htmlPreviewLocation)
             }
-        } else if hasCurrentRenderableDiff, let diff = fileDiff, !diff.lines.isEmpty {
+        } else if hasCurrentRenderableDiff, let diff = renderedDiff, let rows = loadedDiff?.rows, !rows.lines.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                if diff.whitespaceOnlyHidden {
+                if diff.flags.whitespaceOnlyHidden {
                     whitespaceHiddenBanner
                 }
                 if let projection = effectiveProjection, shouldShowProjectionBanner {
                     projectionBanner(projection)
                 }
                 Group {
-                    if settings.sideBySideDiff, canUseSideBySide(diff) {
+                    if settings.sideBySideDiff, diff.flags.supportsSideBySide {
                         VStack(alignment: .leading, spacing: 0) {
                             // Side-by-side has no review gutter yet; without this bridge the file's advertised notes would be unreachable until the user guesses to switch views.
                             if reviewNotesEnabled, !unresolvedReviewNoteSummaries.isEmpty {
@@ -84,7 +84,7 @@ extension DiffSection {
                                 Divider()
                             }
                             SideBySideDiffView(
-                                diff: diff,
+                                diff: diff.loaded,
                                 onExpandContext: expandContext,
                                 resetSelectionGeneration: contextExpansionDisplay.selectionGeneration,
                                 revealFeedback: contextExpansionDisplay.revealFeedback
@@ -93,11 +93,10 @@ extension DiffSection {
                         .id("sbs-\(hunk.path)")
                     } else {
                         NativeDiffView(
-                            diff: diff,
+                            displayLines: rows.lines,
+                            displayGroups: rows.groups,
                             gutterActions: self,
                             reviewNotes: reviewNotesEnabled ? loadedReviewNoteSummaries() : [],
-                            displayLines: loadedDisplayLines,
-                            displayGroups: displayGroups,
                             reserveNoteColumn: reservesReviewNoteGutterColumn,
                             compactGutterWidth: usesProjectionNativeGutter,
                             onExpandContext: expandContext,
@@ -248,20 +247,6 @@ extension DiffSection {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.orange.opacity(0.08))
-    }
-
-    func canUseSideBySide(_ diff: FileDiff) -> Bool {
-        isTwoColumnDiff(diff) && !hasConflictLines(diff)
-    }
-
-    private func isTwoColumnDiff(_ diff: FileDiff) -> Bool {
-        let hasAdded = diff.lines.contains { $0.style == .added }
-        let hasRemoved = diff.lines.contains { $0.style == .removed }
-        return hasAdded && hasRemoved
-    }
-
-    private func hasConflictLines(_ diff: FileDiff) -> Bool {
-        diff.lines.contains { $0.conflictKind != .none }
     }
 
     private var isGitLfsPlaceholder: Bool {

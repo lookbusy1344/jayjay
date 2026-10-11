@@ -87,12 +87,21 @@ final class DiffMovedBadgeTests: XCTestCase {
             line(.context, 2, 5), line(.context, 3, 6), line(.context, 4, 7),
             line(.added, nil, 9, MovedRow(counterpartLine: 1, startsBlock: true))
         ], whitespaceOnlyHidden: false)
+        let small = "fn small() {\n    x(1);\n}\n"
+        let big = "fn big() {\n    let a = compute(1, 2);\n}\n"
+        let loaded = LoadedDiff.fromHunk(
+            hunk: DiffHunk(
+                path: "moved.rs", oldPath: nil, oldContent: small + big, newContent: big + small,
+                oldPreview: nil, newPreview: nil, hunkType: .modified, reviewIdentity: "", projection: nil
+            ),
+            ignoreWhitespace: false
+        )
         let fonts = try [XCTUnwrap(NSFont(name: "Courier New", size: 11)), XCTUnwrap(NSFont(name: "Georgia", size: 16.5))]
         for sideBySide in [false, true] {
             func view(_ interfaceFont: NSFont) -> some View {
                 Group {
                     if sideBySide {
-                        SideBySideDiffView(diff: diff)
+                        SideBySideDiffView(diff: loaded)
                     } else {
                         NativeDiffView(diff: diff)
                     }

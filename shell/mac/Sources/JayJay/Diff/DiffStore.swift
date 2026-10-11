@@ -3,9 +3,23 @@ import Observation
 
 @Observable
 final class DiffStore {
+    /// One loaded diff with the state read across the FFI at load; display rows are read when a section shows it.
     struct CachedDiff {
-        let diff: FileDiff
+        let loaded: LoadedDiff
         let content: DiffLoadedContent
+        let review: ReviewDisplayParts?
+        let flags: LoadedDiffFlags
+
+        init(_ loaded: LoadedDiff) {
+            self.init(loaded: loaded, content: DiffLoadedContent(loaded.hunk()))
+        }
+
+        init(loaded: LoadedDiff, content: DiffLoadedContent) {
+            self.loaded = loaded
+            self.content = content
+            review = loaded.reviewDisplay()
+            flags = loaded.flags()
+        }
 
         var oldContent: String {
             content.oldText
@@ -13,14 +27,6 @@ final class DiffStore {
 
         var newContent: String {
             content.newText
-        }
-
-        var oldPreview: DiffPreview? {
-            content.oldPreview
-        }
-
-        var newPreview: DiffPreview? {
-            content.newPreview
         }
 
         var projection: DiffProjection? {
@@ -87,49 +93,24 @@ final class DiffStore {
             return cached
         }
 
-        var content = DiffLoadedContent(
-            oldContent: hunk.oldContent,
-            newContent: hunk.newContent,
-            oldPreview: hunk.oldPreview,
-            newPreview: hunk.newPreview,
-            projection: hunk.projection,
-            supportsFileEditor: hunk.supportsFileEditor
-        )
-
         let needsProjectionModeReload = hunk.projection != nil
             && projectionMode != nil
             && hunk.projection?.mode != projectionMode
-        if Self.shouldLoadFileContent(
-            oldContent: content.oldText,
-            newContent: content.newText,
+        let loadsFromRepo = Self.shouldLoadFileContent(
+            oldContent: hunk.oldContent ?? "",
+            newContent: hunk.newContent ?? "",
             projectionModeChanged: needsProjectionModeReload
-        ) {
-            let loaded = await loadFileContent(
-                repo: repo, hunk: hunk, rev: rev, fromRev: compareFromRev,
-                projectionMode: projectionMode
-            )
-            content = DiffLoadedContent(
-                oldContent: loaded.oldContent,
-                newContent: loaded.newContent,
-                oldPreview: content.oldPreview ?? loaded.oldPreview,
-                newPreview: content.newPreview ?? loaded.newPreview,
-                projection: loaded.projection,
-                supportsFileEditor: loaded.supportsFileEditor
-            )
-        }
-
-        let path = content.projection?.virtualPath ?? hunk.path
-        let diff = await Task.detached {
-            repo.computeNativeDiff(
-                path: path, oldContent: content.oldText, newContent: content.newText,
-                ignoreWhitespace: ignoreWhitespace
-            )
-        }.value
-
-        let cached = CachedDiff(
-            diff: diff,
-            content: content
         )
+        let request = Self.loadRequest(
+            hunk: hunk, rev: rev, fromRev: compareFromRev,
+            projectionMode: projectionMode, ignoreWhitespace: ignoreWhitespace
+        )
+        let cached = await Task.detached {
+            let loaded = loadsFromRepo
+                ? Self.loadFromRepo(repo: repo, request: request, hunk: hunk, ignoreWhitespace: ignoreWhitespace)
+                : LoadedDiff.fromHunk(hunk: hunk, ignoreWhitespace: ignoreWhitespace)
+            return CachedDiff(loaded)
+        }.value
         await cache.set(key, value: cached)
         return cached
     }
@@ -239,7 +220,8 @@ actor DiffCache {
         }
     }
 
+    /// Rust's copy of the diff plus the texts held here.
     private func bytes(_ diff: DiffStore.CachedDiff) -> Int {
-        diff.content.oldText.utf8.count + diff.content.newText.utf8.count
+        Int(diff.loaded.retainedBytes()) + diff.content.oldText.utf8.count + diff.content.newText.utf8.count
     }
 }

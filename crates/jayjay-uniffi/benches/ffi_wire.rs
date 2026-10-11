@@ -9,11 +9,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use jayjay_core::diff::{
-    self, ContextExpansionFinish, ContextExpansionRequest, ContextExpansionSession, DiffLine,
-    FileDiff,
+    self, ContextExpansionFinish, ContextExpansionRequest, ContextExpansionSession,
 };
-use jayjay_core::{DiffHunk, Repo, review_display_group_map_from_hunk, review_snapshot_from_hunk};
-use jayjay_uniffi::{ContextExpansionSource, UniFfiTag};
+use jayjay_core::{DiffHunk, DiffLoadRequest, DiffProjectionMode, LoadedDiff, Repo};
+use jayjay_uniffi::{LoadedDiffFlags, UniFfiTag};
 use jj_test::ffi_bench::BenchScenario;
 use uniffi::{Lift, Lower};
 
@@ -158,74 +157,71 @@ impl Ledger {
     }
 }
 
-/// `DiffStore.loadDiff`: `showFile` then `computeNativeDiff` (`DiffStore.swift`).
-fn load_diff(ledger: &mut Ledger, repo: &Repo, rev: &str, path: &str) -> (DiffHunk, FileDiff) {
-    ledger.call("showFile");
-    let rev_arg = ledger.arg(rev.to_owned());
-    let path_arg = ledger.arg(path.to_owned());
-    let hunk = ledger.rust(|| repo.show_file(&rev_arg, &path_arg).expect("show file"));
-    let hunk = ledger.ret(hunk);
+/// `DiffStore.loadDiff`: `loadDiff`, then `CachedDiff` reads the hunk, review state and flags (`DiffStore.swift`). The returned handle crosses as a pointer.
+fn load_diff(ledger: &mut Ledger, repo: &Repo, rev: &str, hunk: &DiffHunk) -> LoadedDiff {
+    ledger.call("loadDiff");
+    let request = ledger.arg(DiffLoadRequest {
+        rev: rev.to_owned(),
+        from_rev: None,
+        path: hunk.path.clone(),
+        old_path: hunk.old_path.clone(),
+        hunk_type: hunk.hunk_type,
+        projection_mode: DiffProjectionMode::Processed,
+        ignore_whitespace: IGNORE_WHITESPACE,
+    });
+    let loaded = ledger.rust(|| repo.load_diff(&request).expect("load diff"));
 
-    ledger.call("computeNativeDiff");
-    let path_arg = ledger.arg(path.to_owned());
-    let old = ledger.arg(hunk.old.content.clone().unwrap_or_default());
-    let new = ledger.arg(hunk.new.content.clone().unwrap_or_default());
-    let file_diff =
-        ledger.rust(|| diff::compute_file_diff(&path_arg, &old, &new, IGNORE_WHITESPACE));
-    let file_diff = ledger.ret(file_diff);
-    (hunk, file_diff)
+    ledger.call("LoadedDiff.hunk");
+    let content = ledger.rust(|| loaded.hunk());
+    ledger.ret(content);
+    read_state(ledger, &loaded);
+    loaded
 }
 
-/// `diffDisplayLines` then `changeGroups` (`DiffSection+Loading.swift`, `PreparedContextExpansion`).
-fn display_projection(ledger: &mut Ledger, lines: Vec<DiffLine>) -> Vec<DiffLine> {
-    ledger.call("diffDisplayLines");
-    let lines = ledger.arg(lines);
-    let display = ledger.rust(|| diff::build_diff_display_lines(&lines));
-    let display = ledger.ret(display);
+/// `CachedDiff(loaded:content:)`: review state and flags.
+fn read_state(ledger: &mut Ledger, loaded: &LoadedDiff) {
+    ledger.call("LoadedDiff.reviewDisplay");
+    let review = ledger.rust(|| loaded.review().cloned());
+    ledger.ret(review);
 
-    ledger.call("changeGroups");
-    let display_arg = ledger.arg(display.clone());
-    let groups = ledger.rust(|| diff::change_groups(&display_arg));
-    ledger.ret(groups);
-    display
+    ledger.call("LoadedDiff.flags");
+    let flags = ledger.rust(|| LoadedDiffFlags {
+        whitespace_only_hidden: loaded.whitespace_only_hidden(),
+        has_context_regions: loaded.has_context_regions(),
+        has_conflicts: loaded.has_conflicts(),
+        supports_side_by_side: loaded.supports_side_by_side(),
+    });
+    ledger.ret(flags);
 }
 
-/// `DiffSectionLoadedDiff.withReviewFingerprints` (`DiffLoadedContent.swift`).
-fn review_fingerprints(ledger: &mut Ledger, hunk: &DiffHunk) {
-    ledger.call("reviewSnapshotFromDiffHunk");
-    let hunk_arg = ledger.arg(hunk.clone());
-    let snapshot = ledger.rust(|| review_snapshot_from_hunk(&hunk_arg));
-    ledger.ret(snapshot);
-
-    ledger.call("reviewDisplayGroupMapFromDiffHunk");
-    let hunk_arg = ledger.arg(hunk.clone());
-    let mapping = ledger.rust(|| review_display_group_map_from_hunk(&hunk_arg, IGNORE_WHITESPACE));
-    ledger.ret(mapping);
+/// `DiffSectionLoadedDiff`: the display rows of the diff a section shows.
+fn read_display_rows(ledger: &mut Ledger, loaded: &LoadedDiff) {
+    ledger.call("LoadedDiff.displayRows");
+    let rows = ledger.rust(|| loaded.display_rows());
+    ledger.ret(rows);
 }
 
-/// Opening one file in the unified view: load, display projection, review fingerprints.
-fn open_file(ledger: &mut Ledger, repo: &Repo, rev: &str, path: &str) -> FileDiff {
-    let (hunk, file_diff) = load_diff(ledger, repo, rev, path);
-    display_projection(ledger, file_diff.lines.clone());
-    review_fingerprints(ledger, &hunk);
-    file_diff
+/// Opening one file in the unified view: load, then its display rows.
+fn open_file(ledger: &mut Ledger, repo: &Repo, rev: &str, hunk: &DiffHunk) {
+    let loaded = load_diff(ledger, repo, rev, hunk);
+    read_display_rows(ledger, &loaded);
 }
 
-/// One side-by-side width change: `buildSideBySideRows` then `wrapSbsRows` (`SideBySideDiffCoordinator.swift`).
-fn sbs_resize(ledger: &mut Ledger, lines: &[DiffLine], cols: u32) {
-    ledger.call("buildSideBySideRows");
-    let lines = ledger.arg(lines.to_vec());
-    let rows = ledger.rust(|| diff::build_side_by_side_rows(&lines));
+/// `SideBySideCoordinator`: rows once per diff, then `wrapSbsRows` per width change.
+fn sbs_sweep(ledger: &mut Ledger, loaded: &LoadedDiff, widths: &[u32]) {
+    ledger.call("LoadedDiff.sideBySideRows");
+    let rows = ledger.rust(|| loaded.side_by_side_rows());
     let rows = ledger.ret(rows);
-
-    ledger.call("wrapSbsRows");
-    let rows = ledger.arg(rows);
-    let wrapped = ledger.rust(|| diff::wrap_sbs_rows(&rows, cols, cols, NO_MOVED_LABEL_COLS));
-    ledger.ret(wrapped);
+    for &cols in widths {
+        ledger.call("wrapSbsRows");
+        let rows = ledger.arg(rows.clone());
+        let wrapped = ledger.rust(|| diff::wrap_sbs_rows(&rows, cols, cols, NO_MOVED_LABEL_COLS));
+        ledger.ret(wrapped);
+    }
 }
 
-/// `expandContext(.allRegions)` (`DiffSection+ContextExpansion.swift`): begin, run with the full source, finish, then the display projection.
-fn expand_all(ledger: &mut Ledger, hunk: &DiffHunk, file_diff: FileDiff) {
+/// `expandContext(.allRegions)` (`DiffSection+ContextExpansion.swift`): begin, run from the handle, finish into a new handle, then read its state and display rows.
+fn expand_all(ledger: &mut Ledger, loaded: &LoadedDiff) {
     let mut session = ContextExpansionSession::default();
     ledger.call("ContextExpansionSession.begin");
     let attempt = ledger.rust(|| {
@@ -235,63 +231,47 @@ fn expand_all(ledger: &mut Ledger, hunk: &DiffHunk, file_diff: FileDiff) {
     });
 
     ledger.call("ContextExpansionAttempt.run");
-    let source = ledger.arg(ContextExpansionSource {
-        diff: file_diff,
-        old_content: hunk.old.content.clone().unwrap_or_default(),
-        new_content: hunk.new.content.clone().unwrap_or_default(),
-    });
-    let outcome = ledger.rust(|| {
-        attempt.run(Some(diff::ContextExpansionSource {
-            diff: source.diff,
-            old_content: source.old_content.into(),
-            new_content: source.new_content.into(),
-        }))
-    });
+    let outcome = ledger.rust(|| attempt.run(Some(loaded.expansion_source())));
 
     ledger.call("ContextExpansionSession.finish");
-    let finish = ledger.rust(|| session.finish(EXPANSION_BASIS, outcome));
-    let ContextExpansionFinish::Applied { diff, .. } = ledger.ret(finish) else {
-        panic!("expansion was not applied");
-    };
-    display_projection(ledger, diff.lines);
+    let expanded = ledger.rust(|| match session.finish(EXPANSION_BASIS, outcome) {
+        ContextExpansionFinish::Applied { diff, .. } => loaded.with_expanded(diff),
+        _ => panic!("expansion was not applied"),
+    });
+    read_state(ledger, &expanded);
+    read_display_rows(ledger, &expanded);
 }
 
-fn changed_paths(repo: &Repo, rev: &str) -> Vec<String> {
-    repo.show_summary(rev)
-        .expect("show summary")
-        .diff
-        .into_iter()
-        .map(|hunk| hunk.path)
-        .collect()
+fn changed_hunks(repo: &Repo, rev: &str) -> Vec<DiffHunk> {
+    repo.show_summary(rev).expect("show summary").diff
 }
 
 fn replay(repo: &Repo, workload: &str, scenario: BenchScenario) -> Ledger {
     let rev = scenario.bookmark();
-    let paths = changed_paths(repo, &rev);
+    let hunks = changed_hunks(repo, &rev);
     let mut ledger = Ledger::default();
     match workload {
         "open" => {
-            for path in &paths {
-                open_file(&mut ledger, repo, &rev, path);
+            for hunk in &hunks {
+                open_file(&mut ledger, repo, &rev, hunk);
             }
         }
         "preload" => {
-            for path in &paths {
-                load_diff(&mut ledger, repo, &rev, path);
+            for hunk in &hunks {
+                load_diff(&mut ledger, repo, &rev, hunk);
             }
         }
         "sbs" => {
-            let (_, file_diff) = load_diff(&mut Ledger::default(), repo, &rev, &paths[0]);
+            let loaded = load_diff(&mut Ledger::default(), repo, &rev, &hunks[0]);
             let widths: Vec<u32> = (SBS_MIN_COLS..=SBS_MAX_COLS)
                 .step_by(SBS_COL_STEP)
                 .collect();
-            for &cols in widths.iter().chain(widths.iter().rev()) {
-                sbs_resize(&mut ledger, &file_diff.lines, cols);
-            }
+            let sweep: Vec<u32> = widths.iter().chain(widths.iter().rev()).copied().collect();
+            sbs_sweep(&mut ledger, &loaded, &sweep);
         }
         "expand" => {
-            let (hunk, file_diff) = load_diff(&mut Ledger::default(), repo, &rev, &paths[0]);
-            expand_all(&mut ledger, &hunk, file_diff);
+            let loaded = load_diff(&mut Ledger::default(), repo, &rev, &hunks[0]);
+            expand_all(&mut ledger, &loaded);
         }
         _ => unreachable!(),
     }

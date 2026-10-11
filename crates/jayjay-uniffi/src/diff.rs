@@ -18,6 +18,8 @@ use jayjay_core::{FileDiffStats, SetiGlyph};
 #[cfg(feature = "desktop")]
 use jayjay_core::JayError;
 
+use crate::LoadedDiff;
+
 #[derive(uniffi::Record)]
 pub struct SetiIcon {
     pub glyph: String,
@@ -148,13 +150,6 @@ fn merge_hunk_is_unresolved(result: String, hunk: MergeEditorHunk) -> bool {
     hunk.is_unresolved(&result)
 }
 
-#[derive(uniffi::Record)]
-pub struct ContextExpansionSource {
-    pub diff: FileDiff,
-    pub old_content: String,
-    pub new_content: String,
-}
-
 #[derive(uniffi::Object)]
 pub struct ContextExpansionAttempt {
     generation: u64,
@@ -167,27 +162,13 @@ impl ContextExpansionAttempt {
         self.generation
     }
 
-    fn needs_source(&self) -> bool {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|attempt| {
-                attempt
-                    .as_ref()
-                    .map(diff::ContextExpansionAttempt::needs_source)
-            })
-            .unwrap_or(true)
-    }
-
-    fn run(&self, source: Option<ContextExpansionSource>) -> Option<Arc<ContextExpansionOutcome>> {
+    /// `base` is the displayed diff; its rows seed the session's first expansion and its texts carry into the result.
+    fn run(&self, base: Arc<LoadedDiff>) -> Option<Arc<ContextExpansionOutcome>> {
         let attempt = self.inner.lock().ok()?.take()?;
-        let source = source.map(|source| diff::ContextExpansionSource {
-            diff: source.diff,
-            old_content: Arc::from(source.old_content),
-            new_content: Arc::from(source.new_content),
-        });
+        let source = attempt.needs_source().then(|| base.0.expansion_source());
         Some(Arc::new(ContextExpansionOutcome {
             inner: Mutex::new(Some(attempt.run(source))),
+            base,
         }))
     }
 }
@@ -195,6 +176,21 @@ impl ContextExpansionAttempt {
 #[derive(uniffi::Object)]
 pub struct ContextExpansionOutcome {
     inner: Mutex<Option<diff::ContextExpansionOutcome>>,
+    base: Arc<LoadedDiff>,
+}
+
+#[derive(uniffi::Enum)]
+pub enum ContextExpansionFinish {
+    Discarded,
+    Applied {
+        diff: Arc<LoadedDiff>,
+        reveal: Option<diff::ContextExpansionReveal>,
+        selection_generation: u64,
+        next: Option<diff::ContextExpansionRequest>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Default, uniffi::Object)]
@@ -225,14 +221,30 @@ impl ContextExpansionSession {
         &self,
         basis: String,
         outcome: Arc<ContextExpansionOutcome>,
-    ) -> diff::ContextExpansionFinish {
+    ) -> ContextExpansionFinish {
         let Ok(mut session) = self.inner.lock() else {
-            return diff::ContextExpansionFinish::Discarded;
+            return ContextExpansionFinish::Discarded;
         };
-        let Some(outcome) = outcome.inner.lock().ok().and_then(|mut slot| slot.take()) else {
-            return diff::ContextExpansionFinish::Discarded;
+        let Some(inner) = outcome.inner.lock().ok().and_then(|mut slot| slot.take()) else {
+            return ContextExpansionFinish::Discarded;
         };
-        session.finish(&basis, outcome)
+        match session.finish(&basis, inner) {
+            diff::ContextExpansionFinish::Discarded => ContextExpansionFinish::Discarded,
+            diff::ContextExpansionFinish::Applied {
+                diff,
+                reveal,
+                selection_generation,
+                next,
+            } => ContextExpansionFinish::Applied {
+                diff: Arc::new(LoadedDiff(outcome.base.0.with_expanded(diff))),
+                reveal,
+                selection_generation,
+                next,
+            },
+            diff::ContextExpansionFinish::Failed { message } => {
+                ContextExpansionFinish::Failed { message }
+            }
+        }
     }
 
     fn is_current(&self, basis: String, generation: u64) -> bool {

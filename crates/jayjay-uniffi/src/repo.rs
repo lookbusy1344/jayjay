@@ -5,19 +5,19 @@ use jayjay_core::overview::OverviewSnapshot;
 use jayjay_core::{
     AnnotationLine, BisectState, BisectVerdict, BookmarkInfo, ChangeDetail, ChangeInfo, CliStatus,
     CloneRequest, ConflictEditorData, DiffEditDestination, DiffEditFileSelection, DiffExcerpt,
-    DiffHunk, DiffProjectionMode, DiffStats, EvologEntry, EvologRow, FetchResult, FileDiffStats,
-    FileEditorData, FixSummary, GitSubmoduleStatus, GraphEntry, InsertPosition, JjCommand,
-    JjCommandResult, MutationEffect, OpLogEntry, PrInfo, PullRequestImportPreview, RebaseMode,
-    RecentRevsetStore, Repo, RevsetPreset, Stack, StackedPrResult, SubmitStackLayer, SyncToken,
-    TagInfo, ToolsConfig, WorkspaceInfo, WorkspacePresence,
+    DiffHunk, DiffLoadRequest, DiffProjectionMode, DiffStats, EvologEntry, EvologRow, FetchResult,
+    FileDiffStats, FileEditorData, FixSummary, GitSubmoduleStatus, GraphEntry, InsertPosition,
+    JjCommand, JjCommandResult, MutationEffect, OpLogEntry, PrInfo, PullRequestImportPreview,
+    RebaseMode, RecentRevsetStore, Repo, RevsetPreset, Stack, StackedPrResult, SubmitStackLayer,
+    SyncToken, TagInfo, ToolsConfig, WorkspaceInfo, WorkspacePresence,
     diff::{self, CollapsedDiff, FileDiff, ReviewFileSnapshot},
-    review_display_group_map_from_hunk, review_snapshot_from_hunk,
 };
 use jayjay_primitives::{
     NoteAnchor, NoteEntry, ReviewFileRollup, ReviewGroupState, ReviewNoteStatus, ReviewStoreSummary,
 };
 use jayjay_review::ReviewStore;
 
+use crate::LoadedDiff;
 use crate::dag::{DagSelectionGraph, GraphWithLayout, layout_data};
 use jayjay_core::JayError;
 
@@ -363,19 +363,6 @@ fn review_agent_marked_paths(change_id: String, store_path: Option<String>) -> V
 #[uniffi::export]
 fn review_canonical_snapshot(old_content: String, new_content: String) -> ReviewFileSnapshot {
     jayjay_core::diff::canonical_review_snapshot(&old_content, &new_content)
-}
-
-#[uniffi::export]
-fn review_snapshot_from_diff_hunk(hunk: DiffHunk) -> ReviewFileSnapshot {
-    review_snapshot_from_hunk(&hunk)
-}
-
-#[uniffi::export]
-fn review_display_group_map_from_diff_hunk(
-    hunk: DiffHunk,
-    ignore_whitespace: bool,
-) -> Vec<Vec<u32>> {
-    review_display_group_map_from_hunk(&hunk, ignore_whitespace)
 }
 
 #[uniffi::export]
@@ -1222,17 +1209,8 @@ impl JayJayRepo {
         self.inner.current_operation_description()
     }
 
-    fn compute_native_diff(
-        &self,
-        path: String,
-        old_content: String,
-        new_content: String,
-        ignore_whitespace: bool,
-    ) -> FileDiff {
-        let mut diff =
-            diff::compute_file_diff(&path, &old_content, &new_content, ignore_whitespace);
-        diff.detect_moves(&old_content, &new_content);
-        diff
+    fn load_diff(&self, request: DiffLoadRequest) -> Result<Arc<LoadedDiff>, JayError> {
+        Ok(Arc::new(LoadedDiff(self.inner.load_diff(&request)?)))
     }
 
     fn compute_native_diff_full(
@@ -1243,16 +1221,6 @@ impl JayJayRepo {
         ignore_whitespace: bool,
     ) -> FileDiff {
         diff::compute_file_diff_full(&path, &old_content, &new_content, ignore_whitespace)
-    }
-
-    fn compute_native_diff_full_plain(
-        &self,
-        path: String,
-        old_content: String,
-        new_content: String,
-        ignore_whitespace: bool,
-    ) -> FileDiff {
-        diff::compute_file_diff_full_plain(&path, &old_content, &new_content, ignore_whitespace)
     }
 
     fn collapse_diff_with_mapping(&self, diff: FileDiff) -> CollapsedDiff {
