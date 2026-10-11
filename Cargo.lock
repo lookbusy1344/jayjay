@@ -4420,6 +4420,7 @@ dependencies = [
  "hotpath",
  "sha2 0.11.0",
  "similar",
+ "stacker",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",

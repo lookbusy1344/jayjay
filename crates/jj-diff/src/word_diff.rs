@@ -1,5 +1,6 @@
 use similar::ChangeTag;
 
+use crate::histogram_stack::with_histogram_stack;
 use crate::syntax::HighlightSpan;
 use crate::text_diff_config;
 
@@ -47,7 +48,10 @@ fn word_diff_style_maps(old_line: &str, new_line: &str) -> (Vec<bool>, Vec<bool>
     let mut old_changed = vec![false; old_line.len()];
     let mut new_changed = vec![false; new_line.len()];
 
-    let diff = text_diff_config().diff_words(old_line, new_line);
+    let max_depth = word_token_count(old_line).min(word_token_count(new_line));
+    let diff = with_histogram_stack(max_depth, || {
+        text_diff_config().diff_words(old_line, new_line)
+    });
 
     let mut old_pos = 0usize;
     let mut new_pos = 0usize;
@@ -94,6 +98,19 @@ fn word_diff_style_maps(old_line: &str, new_line: &str) -> (Vec<bool>, Vec<bool>
         new_changed.fill(false);
     }
     (old_changed, new_changed)
+}
+
+/// Token count of `similar`'s `diff_words`, which splits a line into runs of whitespace and non-whitespace.
+fn word_token_count(line: &str) -> usize {
+    line.chars()
+        .map(char::is_whitespace)
+        .fold((0, None), |(count, previous), whitespace| {
+            (
+                count + usize::from(previous != Some(whitespace)),
+                Some(whitespace),
+            )
+        })
+        .0
 }
 
 // A pair keeping under a third of both sides' non-whitespace bytes is a rewrite, not an edit: per-word marks would cover nearly every token and hide the syntax colors beneath them.

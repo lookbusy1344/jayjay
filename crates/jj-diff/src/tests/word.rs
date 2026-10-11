@@ -123,10 +123,3 @@ fn source_line(text: &str, line_no: Option<u32>) -> &str {
         .unwrap()
         .trim_end()
 }
-
-fn styled_text(spans: &[(&str, DiffSpanStyle)], style: DiffSpanStyle) -> String {
-    spans
-        .iter()
-        .filter_map(|(text, span_style)| (*span_style == style).then_some(*text))
-        .collect()
-}

@@ -74,6 +74,9 @@ lang-zig = ["dep:tree-sitter-zig"]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+stacker = { workspace = true }
+
 [dependencies]
 hotpath = { workspace = true, optional = true }
 hex = { workspace = true }
