@@ -9,6 +9,10 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "ffi-bench-fixture"
+path = "src/bin/ffi_bench_fixture.rs"
+
 [dependencies]
 jayjay-core = { path = "../jayjay-core" }
 plist = { workspace = true }

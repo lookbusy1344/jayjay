@@ -125,9 +125,7 @@ public final class SideBySideCoordinator: NSObject, NSSplitViewDelegate, NSTextV
         guard inputs != lastRenderInputs else { return }
         lastRenderInputs = inputs
 
-        // Pre-wrap into visual rows so both panes (and gutters) advance in lock-step.
-        let rows = buildSideBySideRows(lines: diff.lines)
-        let visualRows = wrapSbsRows(rows: rows, oldCols: oldCols, newCols: newCols).map(\.row)
+        let visualRows = SideBySideRowSource.visualRows(lines: diff.lines, oldCols: oldCols, newCols: newCols)
         renderVisualRows(visualRows, font: font, theme: theme, left: left, right: right)
     }
 

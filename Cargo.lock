@@ -4313,6 +4313,7 @@ dependencies = [
  "jayjay-network",
  "jayjay-primitives",
  "jayjay-review",
+ "jj-test",
  "pollster 1.0.1",
  "thiserror 2.0.20",
  "uniffi",

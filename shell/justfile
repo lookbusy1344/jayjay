@@ -47,6 +47,7 @@ list:
   @echo "  just shell::debug-help       Print Help Book bundle, cache, and log diagnostics"
   @echo "  just shell::build            Build the macOS app"
   @echo "  just shell::test             Run the macOS app unit tests"
+  @echo "  just shell::bench-ffi        Run the diff transport benchmarks (release FFI)"
   @echo "  just shell::run              Build and launch the app"
   @echo "  just shell::run /path/to/repo Build and launch the app for a repo"
   @echo "  just shell::demo [appearance] Rebuild the Overview demo repo and open it"
@@ -148,6 +149,28 @@ test: ffi sync-icon help
     -derivedDataPath "{{derived_data}}" \
     test | xcbeautify
   cd "{{root}}/shell/mac/Packages/JayJayDiffUI" && swift test
+
+# Diff transport benchmarks (plans/ffi-diff-transport.md): release FFI, Bench configuration (arm64), fixture repo at /tmp/jayjay-ffi-bench, results in /tmp/jayjay-ffi-bench-results.tsv. Pass test ids to narrow, e.g. JayJayBenchmarks/DiffFFIBenchmarks/testPreload.
+bench-ffi *test_ids: ffi-release sync-icon help
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cargo run -q --locked -p jj-test --bin ffi-bench-fixture -- /tmp/jayjay-ffi-bench
+  xcodegen --spec "{{project}}/project.yml" --project "{{project}}"
+  args=(
+    -project "{{project}}/JayJay.xcodeproj"
+    -scheme JayJayBenchmarks
+    -configuration Bench
+    -sdk macosx
+    -destination "platform=macOS,arch=arm64"
+    -derivedDataPath "{{derived_data}}"
+  )
+  xcodebuild "${args[@]}" build-for-testing | xcbeautify
+  for test_id in {{test_ids}}; do
+    args+=(-only-testing:"$test_id")
+  done
+  rm -f /tmp/jayjay-ffi-bench-results.tsv
+  xcodebuild "${args[@]}" test-without-building | xcbeautify
+  column -t -s $'\t' /tmp/jayjay-ffi-bench-results.tsv
 
 # Deterministic jj fixtures at /tmp/jayjay-test-fixtures plus the user
 # defaults that skip onboarding; see scripts/ui-test-fixtures.sh.

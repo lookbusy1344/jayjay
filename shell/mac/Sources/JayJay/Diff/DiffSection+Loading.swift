@@ -144,7 +144,7 @@ extension DiffSection {
         loadedDiff = nil
     }
 
-    nonisolated private static func prepareLoadedDiff(
+    nonisolated static func prepareLoadedDiff(
         _ cached: DiffStore.CachedDiff,
         path: String,
         basis: String,

@@ -26,6 +26,11 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 required-features = ["desktop"]
 
+[[bench]]
+name = "ffi_wire"
+harness = false
+required-features = ["desktop"]
+
 [dependencies]
 async-trait = { workspace = true }
 jayjay-core = { version = "0.1.0", path = "../jayjay-core", default-features = false }
@@ -37,6 +42,7 @@ uniffi = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+jj-test = { path = "../jj-test" }
 pollster = { workspace = true }
 
 [lints]

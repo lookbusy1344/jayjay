@@ -1,6 +1,7 @@
 // Shared jj test helpers for integration and component tests.
 
 pub mod cmd;
+pub mod ffi_bench;
 pub mod formats;
 pub mod linear;
 pub mod repo;

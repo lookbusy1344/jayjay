@@ -58,6 +58,15 @@ test-wasm:
 test:
   cargo test --workspace
 
+# Diff transport replay (plans/ffi-diff-transport.md): bytes crossed, Rust allocations and time per FFI call. Example: just bench-wire open dense --calls
+bench-wire *args:
+  cargo run -q --locked -p jj-test --bin ffi-bench-fixture -- /tmp/jayjay-ffi-bench
+  cargo bench --locked -p jayjay-uniffi --bench ffi_wire -- /tmp/jayjay-ffi-bench "$@"
+
+# Swift side of the diff transport benchmarks; builds release FFI and the Bench configuration.
+bench-ffi *test_ids:
+  just shell::bench-ffi "$@"
+
 # Example: just profile diff sbs; just profile refresh ~/src/repo graph; just profile refresh --alloc ~/src/repo
 # Scenarios and caveats: crates/jj-diff/benches/profile_diff.md, crates/jayjay-core/benches/profile_refresh.md
 profile kind *args:
