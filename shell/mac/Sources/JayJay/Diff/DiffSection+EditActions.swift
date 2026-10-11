@@ -49,20 +49,12 @@ extension DiffSection: DiffGutterEditActions {
         guard let actions,
               let repo,
               let rev,
-              let displayLines = loadedDisplayLines
+              let loadedDiff
         else { return }
 
         let oldContent = loadedOldContent ?? hunk.oldContent
         let newContent = loadedNewContent ?? hunk.newContent
-        let selectedKeys: Set<String> = Set(
-            displayLines.enumerated().compactMap { index, line in
-                let displayLine = index + 1
-                guard lineRange.contains(displayLine),
-                      line.style == .added || line.style == .removed
-                else { return nil }
-                return diffEditLineKey(line)
-            }
-        )
+        let selectedKeys = loadedDiff.changedLineKeys(selecting: lineRange)
         guard !selectedKeys.isEmpty else { return }
 
         let path = hunk.path
@@ -76,10 +68,7 @@ extension DiffSection: DiffGutterEditActions {
                 newContent: newContent ?? "",
                 ignoreWhitespace: ignoreWhitespace
             )
-            let fullLineIndices = fullDiff.lines.enumerated().compactMap { index, line in
-                selectedKeys.contains(diffEditLineKey(line)) ? index + 1 : nil
-            }
-            let ranges = diffEditCollapsedRanges(fullLineIndices)
+            let ranges = DiffEditRange.ranges(holding: selectedKeys, in: fullDiff.lines)
             guard !ranges.isEmpty else { return }
 
             await MainActor.run {
@@ -104,34 +93,52 @@ extension DiffSection: DiffGutterEditActions {
     }
 }
 
-private func diffEditLineKey(_ line: DiffLine) -> String {
-    let style = switch line.style {
-        case .added: "added"
-        case .removed: "removed"
-        case .context: "context"
-        case .separator: "separator"
-        case .unchanged: "unchanged"
+extension DiffSectionLoadedDiff {
+    /// Keys of the changed rows at rendered display-line numbers `lineRange`.
+    func changedLineKeys(selecting lineRange: ClosedRange<Int>) -> Set<String> {
+        Set((rows?.lines ?? []).enumerated().compactMap { index, line in
+            guard lineRange.contains(index + 1), line.style == .added || line.style == .removed else { return nil }
+            return line.diffEditKey
+        })
     }
-    return "\(style)|\(line.oldLineNo.map(String.init) ?? "-")|\(line.newLineNo.map(String.init) ?? "-")"
 }
 
-private func diffEditCollapsedRanges(_ indices: [Int]) -> [DiffEditRange] {
-    guard let first = indices.first else { return [] }
-
-    var ranges: [DiffEditRange] = []
-    var start = first
-    var previous = first
-
-    for index in indices.dropFirst() {
-        if index == previous + 1 {
-            previous = index
-            continue
+extension DiffEditRange {
+    /// 1-based ranges of `lines` holding the rows with these keys. Rendered rows list each changed run removed-before-added while a raw diff interleaves word pairs, so rows map by key, not by index.
+    static func ranges(holding keys: Set<String>, in lines: [DiffLine]) -> [DiffEditRange] {
+        let indices = lines.enumerated().compactMap { index, line in
+            keys.contains(line.diffEditKey) ? index + 1 : nil
         }
-        ranges.append(DiffEditRange(startLine: UInt32(start), endLine: UInt32(previous)))
-        start = index
-        previous = index
-    }
+        guard let first = indices.first else { return [] }
 
-    ranges.append(DiffEditRange(startLine: UInt32(start), endLine: UInt32(previous)))
-    return ranges
+        var ranges: [DiffEditRange] = []
+        var start = first
+        var previous = first
+
+        for index in indices.dropFirst() {
+            if index == previous + 1 {
+                previous = index
+                continue
+            }
+            ranges.append(DiffEditRange(startLine: UInt32(start), endLine: UInt32(previous)))
+            start = index
+            previous = index
+        }
+
+        ranges.append(DiffEditRange(startLine: UInt32(start), endLine: UInt32(previous)))
+        return ranges
+    }
+}
+
+private extension DiffLine {
+    var diffEditKey: String {
+        let style = switch style {
+            case .added: "added"
+            case .removed: "removed"
+            case .context: "context"
+            case .separator: "separator"
+            case .unchanged: "unchanged"
+        }
+        return "\(style)|\(oldLineNo.map(String.init) ?? "-")|\(newLineNo.map(String.init) ?? "-")"
+    }
 }
