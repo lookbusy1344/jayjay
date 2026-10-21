@@ -59,6 +59,7 @@ Discovery is read-only; report evidence before editing, and prefer a few high-co
 - **Shared helpers**: put reusable fixtures and command helpers in `crates/jj-test`. Do not use `#[path = "..."]` to stitch helper folders into tests.
 - Helpers that implement a crate's own traits cannot live in jj-test — a helper crate linking the crate under test implements different trait types than the unit tests' `crate::` ones. Put them in the defining crate behind a `test-util` feature (see `jayjay-review/src/test_util.rs`) so other crates' tests can dev-depend on the same impls.
 - Keep helpers local when they construct crate-private types for one module's tests.
+- jj keeps per-repo config under `$XDG_CONFIG_HOME/jj/repos`, and `JJ_CONFIG` does not move it. `jj_test::run_command` points the test process's `XDG_CONFIG_HOME` at `target/test-config` before the first fixture command, so fixture `jj` children and in-process loads share one root outside `~/.config`. Tests that load a repo in-process before any `jj-test` command still use the user root. The Xcode test scheme and `ui-test-fixtures.sh`/`SceneBase` set their own roots under `/tmp`.
 - The core `mock` feature uses an in-memory forge sign-in store. Run `cargo test -p jayjay-core --features mock --lib forge_auth::` to include credential persistence regressions.
 
 ## Hung and Racing jj Operations

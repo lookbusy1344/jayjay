@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 
 use jayjay_core::Repo;
 use jayjay_core::diff::{ConflictLineKind, compute_file_diff_full};
@@ -6,6 +7,33 @@ use jj_test::{
     change_by_description, changed_paths, current_op_id, git_stdout, init_jj_repo, run_git, run_jj,
     run_jj_in,
 };
+
+#[test]
+fn fixture_repo_config_stays_out_of_the_user_config_dir() {
+    let temp_dir = init_jj_repo();
+    let repo_path = temp_dir.path().join("repo");
+    Repo::open(&repo_path).expect("open repo");
+
+    let config_id =
+        fs::read_to_string(repo_path.join(".jj/repo/config-id")).expect("read config-id");
+    let test_root = PathBuf::from(
+        std::env::var_os("XDG_CONFIG_HOME").expect("XDG_CONFIG_HOME set for test runs"),
+    );
+    let user_root = std::env::home_dir().expect("home dir").join(".config");
+    assert_ne!(test_root, user_root);
+    let repo_config = fs::read_to_string(
+        test_root
+            .join("jj/repos")
+            .join(&config_id)
+            .join("config.toml"),
+    )
+    .expect("repo config under the test root");
+    assert!(
+        repo_config.contains("name = \"Test User\""),
+        "{repo_config}"
+    );
+    assert!(!user_root.join("jj/repos").join(&config_id).exists());
+}
 
 #[test]
 fn show_summary_marks_divergent_revision_loaded_by_commit_id() {

@@ -30,6 +30,7 @@ mod tests {
 
     #[test]
     fn initializes_jj_git_repo() {
+        jj_test::isolate_repo_config();
         let tmp = tempfile::tempdir().expect("tempdir");
         init_jj_git_repo(tmp.path()).expect("init repo");
 
@@ -38,6 +39,7 @@ mod tests {
 
     #[test]
     fn preserves_existing_repository_init_error() {
+        jj_test::isolate_repo_config();
         let tmp = tempfile::tempdir().expect("tempdir");
         init_jj_git_repo(tmp.path()).expect("init repo");
 

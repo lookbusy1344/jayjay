@@ -24,6 +24,9 @@ schemes:
       gatherCoverageData: false
       targets:
         - JayJayTests
+      # Repo config from `jj config set --repo` and in-process repo loads stays out of ~/.config/jj/repos.
+      environmentVariables:
+        XDG_CONFIG_HOME: /tmp/jayjay-unit-test-config
     run:
       config: Debug
 

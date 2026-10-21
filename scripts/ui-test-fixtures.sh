@@ -15,6 +15,8 @@ format_fixtures="$project_root/tests/fixtures/formats"
 
 # Identity for the fixture commits; silences jj's "Name and email not configured" on CI.
 export JJ_USER="JayJay CI" JJ_EMAIL="ci@jayjay.local"
+# `jj config set --repo` writes under $XDG_CONFIG_HOME/jj/repos; SceneBase points the app at the same root.
+export XDG_CONFIG_HOME="$fixtures/xdg-config"
 
 setup_defaults() {
   defaults write "$bundle_id" jayjay.hasCompletedOnboarding -bool YES

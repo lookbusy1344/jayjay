@@ -1,7 +1,18 @@
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Once;
+
+/// jj keeps per-repo config under `$XDG_CONFIG_HOME/jj/repos`, and `JJ_CONFIG` does not move it. Set it process-wide so fixture children and in-process jj-lib loads share one root outside `~/.config`.
+pub fn isolate_repo_config() {
+    static ISOLATE: Once = Once::new();
+    ISOLATE.call_once(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-config");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", root) };
+    });
+}
 
 pub fn run_command(program: &str, display_args: &[String], command: &mut Command) -> Output {
+    isolate_repo_config();
     let output = command
         .output()
         .unwrap_or_else(|err| panic!("failed to run {program} {display_args:?}: {err}"));

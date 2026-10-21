@@ -101,6 +101,8 @@ class SceneBase: XCTestCase {
             .appendingPathComponent(Self.repositoryStoreFixtureName)
             .path
         app.launchEnvironment["JAYJAY_RECENT_REVSETS_PATH"] = recentRevsetsPath
+        // Fixture repo config lives where ui-test-fixtures.sh wrote it, not under the runner's ~/.config/jj/repos.
+        app.launchEnvironment["XDG_CONFIG_HOME"] = root.appendingPathComponent("xdg-config").path
         for (key, value) in Self.launchEnvironment {
             app.launchEnvironment[key] = value
         }
