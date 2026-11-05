@@ -1,9 +1,9 @@
 import JayJayCore
 import SwiftUI
 
-/// Shape marks trunk bookmarks as diamonds; fill encodes working-copy/conflict/empty/bookmark state.
+/// Shape marks immutable changes as diamonds, matching `jj log`'s ◆; fill encodes working-copy/conflict/empty/bookmark state.
 struct DAGNodeStyle {
-    enum Shape {
+    enum Shape: Equatable {
         case circle
         case diamond
     }
@@ -12,6 +12,9 @@ struct DAGNodeStyle {
         case filled(Color)
         case outlined(Color, lineWidth: CGFloat)
     }
+
+    /// A diamond inscribed in a circle's box covers 2/π of its area; scaling by √(π/2) gives both shapes equal visual weight.
+    private static let diamondRadiusScale = (CGFloat.pi / 2).squareRoot()
 
     let shape: Shape
     let radius: CGFloat
@@ -37,8 +40,9 @@ struct DAGNodeStyle {
     static func resolve(change: ChangeInfo) -> DAGNodeStyle {
         let isTrunk = change.bookmarks.contains(where: { isTrunkBookmark(name: $0) })
         let hasBookmark = !change.bookmarks.isEmpty
-        let shape: Shape = isTrunk ? .diamond : .circle
-        let radius: CGFloat = (isTrunk || hasBookmark) ? nodeRadius + 1 : nodeRadius
+        let shape: Shape = change.isImmutable ? .diamond : .circle
+        let circleRadius: CGFloat = (isTrunk || hasBookmark) ? nodeRadius + 1 : nodeRadius
+        let radius = shape == .diamond ? circleRadius * diamondRadiusScale : circleRadius
 
         let fill: Fill = if change.isWorkingCopy {
             .filled(.accentColor)
