@@ -33,6 +33,36 @@ pub(crate) fn settle(cx: &mut TestAppContext) {
     }
 }
 
+pub(crate) fn run_until(
+    cx: &mut TestAppContext,
+    mut condition: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    for _ in 0..ASYNC_UPDATE_POLL_LIMIT {
+        cx.executor().advance_clock(ASYNC_UPDATE_POLL_INTERVAL);
+        while cx.executor().tick() {}
+        if condition(cx) {
+            return;
+        }
+        std::thread::sleep(ASYNC_UPDATE_POLL_INTERVAL);
+    }
+    panic!("condition did not become true");
+}
+
+pub(crate) fn run_visual_until(
+    cx: &mut VisualTestContext,
+    mut condition: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    for _ in 0..ASYNC_UPDATE_POLL_LIMIT {
+        cx.cx.executor().advance_clock(ASYNC_UPDATE_POLL_INTERVAL);
+        cx.run_until_parked();
+        if condition(cx) {
+            return;
+        }
+        std::thread::sleep(ASYNC_UPDATE_POLL_INTERVAL);
+    }
+    panic!("condition did not become true");
+}
+
 pub(crate) fn click(cx: &mut VisualTestContext, selector: &'static str) {
     let bounds = cx
         .debug_bounds(selector)

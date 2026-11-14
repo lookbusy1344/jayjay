@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::Context;
 use jayjay_core::{DEFAULT_REVSET_DEPTH, build_default_revset};
 

@@ -1,8 +1,8 @@
 use std::fs;
 
 use crate::harness::{
-    install_test_globals, load_selected_change_files, menu_shows, open_fixture, select_file,
-    settle_visual,
+    install_test_globals, load_selected_change_files, menu_shows, open_fixture, run_visual_until,
+    select_file, settle_visual,
 };
 use gpui::{Entity, Modifiers, MouseButton, Point, TestAppContext, VisualTestContext, point, px};
 use jayjay_core::compare;
@@ -748,14 +748,15 @@ fn context_menu_defers_background_refresh_until_it_closes(cx: &mut TestAppContex
     view.update_in(cx, |view, _, cx| {
         view.dispatch_context_action(ContextAction::Noop, cx);
     });
-    settle_visual(cx);
-    assert!(view.read_with(cx, |view, cx| {
-        view.view_model()
-            .read(cx)
-            .files
-            .as_ref()
-            .is_some_and(|files| files.iter().any(|file| file.path == "while-overlay.txt"))
-    }));
+    run_visual_until(cx, |cx| {
+        view.read_with(cx, |view, cx| {
+            view.view_model()
+                .read(cx)
+                .files
+                .as_ref()
+                .is_some_and(|files| files.iter().any(|file| file.path == "while-overlay.txt"))
+        })
+    });
 }
 
 fn no_abandon_item(items: &[jayjay_gpui::ui::context_menu::ContextMenuItem]) -> bool {

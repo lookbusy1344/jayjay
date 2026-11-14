@@ -199,19 +199,6 @@ extension RepoViewModel {
     }
 
     @MainActor
-    private func refreshPrInfo(replacing shown: ChangeInfo?, isAutoTriggered: Bool) {
-        let info = selectedChange?.info
-        let bookmarks = info?.bookmarks ?? []
-        guard let shown, shown.commitId.id == info?.commitId.id else {
-            fetchPrInfo(bookmarks: bookmarks)
-            return
-        }
-        if !isAutoTriggered || shown.bookmarks.first != bookmarks.first {
-            fetchPrInfo(bookmarks: bookmarks, keepingShown: true)
-        }
-    }
-
-    @MainActor
     private func applyWorkingCopyStale(_ isStale: Bool) {
         guard !isShuttingDown else { return }
         isWorkingCopyStale = isStale
