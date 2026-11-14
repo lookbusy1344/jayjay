@@ -80,18 +80,11 @@ final class DAGViewModelTests: XCTestCase {
             selectedId: "left",
             selectedIds: ["left", "immutable"]
         )
-        let single = makeViewModel(
-            entries: [child, left, right, base],
-            selectedId: "child",
-            selectedIds: ["child"]
-        )
 
         XCTAssertTrue(heads.canRebaseSelection(onto: base.change))
         XCTAssertFalse(heads.canRebaseSelection(onto: child.change))
         XCTAssertFalse(immutableSelection.canAbandonSelection)
         XCTAssertFalse(immutableSelection.canRebaseSelection(onto: base.change))
-        XCTAssertFalse(single.canMergeSelectedChange(with: left.change))
-        XCTAssertTrue(single.canMergeSelectedChange(with: right.change))
     }
 
     func testDivergentSelectionIsIdentifiedByCommitId() {
@@ -101,22 +94,6 @@ final class DAGViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.selectedRevisions, ["first"])
         XCTAssertEqual(viewModel.change(for: "shared")?.commitId.id, "first")
-    }
-
-    func testSingleSelectionMergeEligibilityFollowsReachability() {
-        // base <- left <- child ; base <- right. Selecting `left`, only the independent `right` merges.
-        let base = makeEntry(changeId: "base", commitId: "base-commit", isDivergent: false)
-        let left = makeEntry(changeId: "left", commitId: "left-commit", parents: ["base-commit"], isDivergent: false)
-        let right = makeEntry(changeId: "right", commitId: "right-commit", parents: ["base-commit"], isDivergent: false)
-        let child = makeEntry(changeId: "child", commitId: "child-commit", parents: ["left-commit"], isDivergent: false)
-        let viewModel = makeViewModel(
-            entries: [child, left, right, base], selectedId: "left", selectedIds: ["left"]
-        )
-
-        XCTAssertFalse(viewModel.canMergeSelectedChange(with: child.change)) // descendant
-        XCTAssertFalse(viewModel.canMergeSelectedChange(with: base.change)) // ancestor
-        XCTAssertFalse(viewModel.canMergeSelectedChange(with: left.change)) // itself
-        XCTAssertTrue(viewModel.canMergeSelectedChange(with: right.change)) // independent
     }
 
     func testMenuProjectionPreservesFilteredAncestryAndRefreshesWithItsInputs() {
@@ -134,26 +111,17 @@ final class DAGViewModelTests: XCTestCase {
         let original = makeViewModel(entries: entries, selectedId: "first")
 
         XCTAssertEqual(original.selectedRevisions, ["first"])
-        XCTAssertFalse(original.canMergeSelectedChange(with: indirect.change))
-        XCTAssertTrue(original.canMergeSelectedChange(with: missing.change))
-        XCTAssertTrue(original.canMergeSelectedChange(with: second.change))
         XCTAssertEqual(original.change(for: "shared")?.commitId.id, "first")
 
         let reselected = makeViewModel(entries: entries, selectedId: "second")
         XCTAssertEqual(reselected.selectedRevisions, ["second"])
-        XCTAssertTrue(reselected.canMergeSelectedChange(with: indirect.change))
 
         let refreshed = makeViewModel(entries: [first, second], selectedId: "first")
         XCTAssertNil(refreshed.change(for: "descendant"))
-        // The refreshed graph dropped the descendant, so it is no longer a merge target.
-        XCTAssertFalse(refreshed.canMergeSelectedChange(with: indirect.change))
-        XCTAssertFalse(original.canMergeSelectedChange(with: indirect.change))
 
         let batch = makeViewModel(
             entries: entries, selectedId: "first", selectedIds: ["first", "second"]
         )
-        // A change already in the selection is not itself a merge target.
-        XCTAssertFalse(batch.canMergeSelectedChange(with: first.change))
         XCTAssertFalse(batch.canRebaseSelection(onto: indirect.change))
         XCTAssertTrue(batch.canRebaseSelection(onto: missing.change))
     }

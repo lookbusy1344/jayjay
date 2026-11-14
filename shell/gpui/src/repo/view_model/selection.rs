@@ -31,7 +31,7 @@ impl RepoViewModel {
                 })
             })
             .map(|change| (change.change_id.id.clone(), change.commit_id.id.clone()));
-        self.refresh_preferring(false, selection, cx);
+        self.refresh_preferring(false, true, selection, cx);
     }
 
     pub fn select_change(&mut self, ix: usize, cx: &mut Context<Self>) {
