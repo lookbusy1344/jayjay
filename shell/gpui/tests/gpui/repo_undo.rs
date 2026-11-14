@@ -158,7 +158,11 @@ fn undo_after_a_working_copy_snapshot_explains_why_and_keeps_the_file(cx: &mut T
     view.update(cx, |view, cx| {
         view.view_model().update(cx, |vm, cx| vm.refresh(false, cx))
     });
-    settle_visual(cx);
+    run_visual_until(cx, |cx| {
+        view.read_with(cx, |view, cx| {
+            !view.view_model().read(cx).loading.refreshing
+        })
+    });
     let operation = current_op_id(&fixture.path);
     focus_view(&view, cx);
 

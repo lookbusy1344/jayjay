@@ -889,7 +889,15 @@ fn auto_refresh_reloads_an_edited_working_copy_in_place(cx: &mut TestAppContext)
     )
     .expect("edit");
     vm.update(cx, |vm, cx| vm.handle_working_copy_change(cx));
-    settle_visual(cx);
+    run_visual_until(cx, |cx| {
+        vm.read_with(cx, |vm, _| {
+            vm.shown.diff().is_some_and(|diff| {
+                diff.lines
+                    .iter()
+                    .any(|line| line.text().contains("rewritten on disk"))
+            })
+        })
+    });
 
     assert!(!blanked.get());
     vm.read_with(cx, |vm, _| {
